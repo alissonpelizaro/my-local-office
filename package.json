@@ -1,0 +1,17 @@
+{
+  "name": "my-local-office",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "start": "pnpm --filter server start",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm --filter web build",
+    "test": "pnpm --filter server test",
+    "install-service": "bash scripts/install-service.sh",
+    "uninstall-service": "bash scripts/uninstall-service.sh"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

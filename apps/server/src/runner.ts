@@ -1,0 +1,186 @@
+import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import readline from 'node:readline';
+import { type Activity, publish, setActivity } from './bus.ts';
+import { CLAUDE_BIN, PORT } from './config.ts';
+import { type Employee, get, type Provider, run } from './db.ts';
+import { childEnv } from './providers.ts';
+import { settings } from './settings.ts';
+
+export type RunKind = 'task' | 'consult' | 'onboard';
+export type RunContext = {
+  token: string;
+  kind: RunKind;
+  employee: Employee;
+  cwd: string;
+  taskId: number | null;
+  depth: number;
+  chain: number[];
+};
+export type RunResult = { text: string; sessionId: string | null; costUsd: number; isError: boolean };
+export type Run = { ctx: RunContext; send(text: string): boolean; stop(): void; done: Promise<RunResult> };
+
+const runs = new Map<string, Run>();
+export const runByToken = (token: string) => runs.get(token);
+export const stopAll = () => runs.forEach((r) => r.stop());
+const busy = (employeeId: number) => [...runs.values()].some((r) => r.ctx.employee.id === employeeId);
+
+const OFFICE_TOOLS = ['directory', 'ask_colleague', 'delegate_task', 'ask_boss'].map((t) => `mcp__office__${t}`);
+
+const TOOL_ACTIVITY: Record<string, Activity> = {
+  Read: 'reading',
+  Grep: 'reading',
+  Glob: 'reading',
+  WebFetch: 'reading',
+  WebSearch: 'reading',
+  Edit: 'typing',
+  Write: 'typing',
+  MultiEdit: 'typing',
+  NotebookEdit: 'typing',
+  Bash: 'running',
+  Task: 'delegating',
+  Agent: 'delegating',
+  mcp__office__ask_colleague: 'talking',
+  mcp__office__delegate_task: 'delegating',
+  mcp__office__ask_boss: 'waiting',
+};
+const KIND_ACTIVITY: Record<RunKind, Activity> = { task: 'thinking', consult: 'consulting', onboard: 'onboarding' };
+
+export function summarize(input: any): string {
+  const s = input?.command ?? input?.file_path ?? input?.notebook_path ?? input?.pattern ?? input?.url ?? input?.question ?? input?.title;
+  return String(s ?? JSON.stringify(input ?? {})).slice(0, 300);
+}
+
+const userMessage = (text: string) => JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n';
+
+export type StartRun = {
+  kind: RunKind;
+  employee: Employee;
+  prompt: string;
+  systemPrompt: string;
+  taskId?: number | null;
+  depth?: number;
+  chain?: number[];
+  tools?: string[];
+  model?: string;
+  resume?: string;
+  fork?: boolean; // retoma numa cópia da sessão, sem alterar a original
+  cwd?: string;
+};
+
+// Um processo `claude -p` por execução, no repo do funcionário. O stream-json de saída vira eventos do escritório;
+// permissões e as tools do escritório passam pelo MCP "office" deste servidor, autenticado pelo token da execução.
+export function startRun(o: StartRun): Run {
+  const token = crypto.randomBytes(24).toString('hex');
+  const cwd = o.cwd ?? o.employee.repo_path;
+  const ctx: RunContext = { token, kind: o.kind, employee: o.employee, cwd, taskId: o.taskId ?? null, depth: o.depth ?? 0, chain: o.chain ?? [] };
+  const ids = { employeeId: o.employee.id, taskId: ctx.taskId };
+  const provider = o.employee.provider_id == null ? undefined : get<Provider>('SELECT * FROM providers WHERE id = ?', o.employee.provider_id);
+  const model = provider ? undefined : (o.model ?? o.employee.model ?? settings().defaultModel);
+  const mcp = { mcpServers: { office: { type: 'http', url: `http://127.0.0.1:${PORT}/mcp`, headers: { Authorization: `Bearer ${token}` } } } };
+  const args = [
+    '-p',
+    '--input-format', 'stream-json',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--mcp-config', JSON.stringify(mcp),
+    '--permission-prompt-tool', 'mcp__office__approve',
+    '--allowedTools', OFFICE_TOOLS.join(','),
+    '--append-system-prompt', o.systemPrompt,
+    ...(model ? ['--model', model] : []),
+    ...(o.tools ? ['--tools', o.tools.join(',')] : []),
+    ...(o.resume ? ['--resume', o.resume, ...(o.fork ? ['--fork-session'] : [])] : []),
+  ];
+
+  const child = spawn(CLAUDE_BIN, args, { cwd, env: childEnv(provider), stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.on('error', () => {}); // EPIPE quando o processo morre antes de ler
+  let sent = 1;
+  let results = 0;
+  child.stdin.write(userMessage(o.prompt));
+
+  let sessionId: string | null = null;
+  let runModel: string | null = null;
+  let result: RunResult | undefined;
+  let stderr = '';
+  child.stderr.on('data', (b) => (stderr = (stderr + b).slice(-4000)));
+  setActivity(o.employee.id, KIND_ACTIVITY[o.kind]);
+
+  readline.createInterface({ input: child.stdout }).on('line', (line) => {
+    let m: any;
+    try {
+      m = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (m.type === 'system' && m.subtype === 'init') {
+      sessionId = m.session_id;
+      runModel = m.model ?? null;
+      publish('run.started', { kind: o.kind, sessionId, model: m.model, provider: provider?.name ?? 'nativo' }, ids);
+    } else if (m.type === 'assistant') {
+      for (const b of m.message?.content ?? []) {
+        if (b.type === 'text' && b.text.trim()) {
+          publish('agent.text', { kind: o.kind, text: b.text }, ids);
+        } else if (b.type === 'tool_use') {
+          publish('agent.tool', { kind: o.kind, name: b.name, summary: summarize(b.input) }, ids);
+          if (o.kind === 'task') setActivity(o.employee.id, TOOL_ACTIVITY[b.name] ?? 'running', b.name);
+        }
+      }
+    } else if (m.type === 'result') {
+      result = {
+        text: m.result ?? '',
+        sessionId: m.session_id ?? sessionId,
+        costUsd: m.total_cost_usd ?? 0,
+        isError: Boolean(m.is_error) || m.subtype !== 'success',
+      };
+      // Com stdin aberto o CLI espera a próxima mensagem; fecha quando todas as enviadas tiveram resposta.
+      if (++results >= sent) child.stdin.end();
+    }
+  });
+
+  const done = new Promise<RunResult>((resolve) => {
+    let settled = false;
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      runs.delete(token);
+      if (!busy(o.employee.id)) setActivity(o.employee.id, 'idle');
+      // Custo por execução (task, consulta, onboarding), com nome e departamento congelados para o histórico.
+      if (result?.costUsd) {
+        run(
+          'INSERT INTO usage (employee_id, employee_name, department_id, task_id, kind, model, cost_usd, session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          o.employee.id,
+          o.employee.name,
+          o.employee.department_id,
+          ctx.taskId,
+          o.kind,
+          runModel,
+          result.costUsd,
+          result.sessionId,
+        );
+      }
+      resolve(result ?? { text: stderr.trim() || `claude saiu com código ${code}`, sessionId, costUsd: 0, isError: true });
+    };
+    child.on('error', (e) => {
+      stderr += e.message;
+      finish(null);
+    });
+    child.on('close', finish);
+  });
+
+  const handle: Run = {
+    ctx,
+    done,
+    send(text) {
+      if (child.stdin.writableEnded) return false;
+      sent++;
+      child.stdin.write(userMessage(text));
+      return true;
+    },
+    stop() {
+      child.kill('SIGTERM');
+      setTimeout(() => child.exitCode == null && child.kill('SIGKILL'), 5000).unref();
+    },
+  };
+  runs.set(token, handle);
+  return handle;
+}

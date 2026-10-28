@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Local Office — console</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --warn:#dc2626; --ok:#16a34a; --chip:#eef2ff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b0f17; --panel:#121826; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --accent:#60a5fa; --warn:#f87171; --ok:#4ade80; --chip:#1e293b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 ui-sans-serif, system-ui, sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; }
+  main { display:grid; grid-template-columns: 1.1fr 1.2fr 1fr; gap:16px; padding:16px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+  h3 { font-size:14px; margin:12px 0 6px; display:flex; align-items:center; gap:8px; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .emp { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .muted { color:var(--muted); font-size:12px; }
+  .chip { background:var(--chip); border-radius:999px; padding:1px 8px; font-size:12px; }
+  .chip.waiting, .chip.failed { background:var(--warn); color:#fff; }
+  .chip.done { background:var(--ok); color:#fff; }
+  pre { white-space:pre-wrap; word-break:break-word; margin:6px 0 0; font:12px/1.4 ui-monospace, monospace; max-height:220px; overflow:auto; }
+  form { display:grid; gap:6px; margin-top:8px; }
+  input, select, textarea, button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  button { cursor:pointer; background:var(--panel); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.danger { color:var(--warn); }
+  details summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .approval { border:2px solid var(--warn); border-radius:8px; padding:8px; margin-bottom:8px; }
+  .approval.external { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+  #log { max-height:60vh; overflow:auto; font:12px/1.4 ui-monospace, monospace; }
+  #log div { border-bottom:1px solid var(--line); padding:3px 0; }
+  #log b { color:var(--accent); font-weight:600; }
+</style>
+</head>
+<body>
+<header><h1>My Local Office</h1><span class="muted">console F0</span><span id="conn" class="chip">conectando…</span></header>
+<main>
+  <div>
+    <section><h2>Departamentos</h2><div id="depts"></div>
+      <details><summary>Novo departamento</summary>
+        <form data-api="POST /api/departments"><input name="name" placeholder="Nome" required><input name="color" type="color" value="#2563eb"><button class="primary">Criar</button></form>
+      </details>
+      <details><summary>Novo funcionário</summary>
+        <form data-api="POST /api/employees">
+          <select name="departmentId" class="dept-select" required></select>
+          <input name="repoPath" placeholder="~/webprojects/dta-base" required>
+          <input name="name" placeholder="Nome (padrão: pasta do repo)">
+          <select name="providerId" class="provider-select"></select>
+          <input name="model" placeholder="Modelo nativo (sonnet, opus, haiku)">
+          <label class="row"><input type="checkbox" name="autoEdit"> Editar arquivos do repo sem pedir</label>
+          <button class="primary">Contratar</button>
+        </form>
+      </details>
+    </section>
+    <section><h2>Provedores remotos</h2><div id="providers"></div>
+      <details><summary>Novo provedor</summary>
+        <form data-api="POST /api/providers">
+          <input name="name" placeholder="Nome (ex. dta-proxy)" required>
+          <select name="format"><option value="openai">OpenAI-compatível (base com /v1)</option><option value="anthropic">Anthropic-compatível (base sem /v1)</option></select>
+          <input name="baseUrl" placeholder="https://proxy.lynn.totvs.ai/v1" required>
+          <input name="apiKey" type="password" placeholder="API key" autocomplete="off">
+          <input name="model" placeholder="Modelo (ex. gpt-4o-mini)" required>
+          <input name="smallModel" placeholder="Modelo leve (opcional)">
+          <button class="primary">Salvar</button>
+        </form>
+      </details>
+    </section>
+  </div>
+  <div>
+    <section><h2>Nova task</h2>
+      <form data-api="POST /api/tasks">
+        <select name="employeeId" class="emp-select" required></select>
+        <input name="title" placeholder="Título" required>
+        <textarea name="body" rows="4" placeholder="Descrição"></textarea>
+        <button class="primary">Delegar</button>
+      </form>
+    </section>
+    <section><h2>Tasks</h2><div id="tasks"></div></section>
+  </div>
+  <div>
+    <section><h2>Aprovações</h2><div id="approvals"><span class="muted">Nada pendente.</span></div></section>
+    <section><h2>Atividade</h2><div id="log"></div></section>
+  </div>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
+let S = { departments: [], employees: [], providers: [], tasks: [], approvals: [] };
+const empName = (id) => S.employees.find((e) => e.id === id)?.name ?? (id == null ? 'office' : `#${id}`);
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { alertBox(data.error ?? r.statusText); throw new Error(data.error); }
+  return data;
+}
+function alertBox(msg) { const d = document.createElement('div'); d.className = 'approval'; d.textContent = msg; $('#approvals').prepend(d); setTimeout(() => d.remove(), 6000); }
+
+let deferred = false;
+document.addEventListener('focusout', () => deferred && setTimeout(() => { deferred = false; render(); }));
+function render() {
+  // Não apaga o que está sendo digitado; renderiza ao sair do campo.
+  if (document.activeElement?.matches('#tasks input, #approvals input, #depts input')) return void (deferred = true);
+  const opts = (items, label, empty) => (empty ? `<option value="">${empty}</option>` : '') + items.map((i) => `<option value="${i.id}">${esc(label(i))}</option>`).join('');
+  document.querySelectorAll('.dept-select').forEach((s) => (s.innerHTML = opts(S.departments, (d) => d.name)));
+  document.querySelectorAll('.provider-select').forEach((s) => (s.innerHTML = opts(S.providers, (p) => `${p.name} (${p.model})`, 'Nativo (assinatura Claude)')));
+  const sel = $('.emp-select'), cur = sel.value;
+  sel.innerHTML = opts(S.employees, (e) => e.name); if (cur) sel.value = cur;
+
+  $('#depts').innerHTML = S.departments.map((d) => `
+    <h3><span class="dot" style="background:${esc(d.color)}"></span>${esc(d.name)} <button class="danger" data-del="/api/departments/${d.id}">×</button></h3>
+    ${S.employees.filter((e) => e.department_id === d.id).map((e) => `
+      <div class="emp">
+        <div class="row"><b>${esc(e.name)}</b><span class="chip ${esc(e.activity)}">${esc(e.activity)}</span>
+          <span class="muted">${e.provider_id ? esc(S.providers.find((p) => p.id === e.provider_id)?.name) : 'nativo'}${e.model ? ' · ' + esc(e.model) : ''}${e.auto_edit ? ' · auto-edit' : ''}</span></div>
+        <div class="muted">${esc(e.git_remote ?? e.repo_path)}</div>
+        <details><summary>ficha e config</summary>
+          <pre>${esc(e.profile || '(onboarding…)')}</pre>
+          <div class="row" style="margin-top:6px">
+            <select data-emp-provider="${e.id}">${opts(S.providers, (p) => p.name, 'Nativo')}</select>
+            <input data-emp-model="${e.id}" value="${esc(e.model ?? '')}" placeholder="modelo nativo" size="8">
+            <label><input type="checkbox" data-emp-auto="${e.id}" ${e.auto_edit ? 'checked' : ''}> auto-edit</label>
+            <button data-onboard="${e.id}">Refazer ficha</button><button class="danger" data-del="/api/employees/${e.id}">Demitir</button>
+          </div>
+          ${e.allow_rules.length ? `<div class="muted">Sempre permitido: ${e.allow_rules.map(esc).join(', ')}</div>` : ''}
+        </details>
+      </div>`).join('') || '<div class="muted">Sem funcionários.</div>'}`).join('') || '<span class="muted">Crie um departamento.</span>';
+  S.employees.forEach((e) => { const s = document.querySelector(`[data-emp-provider="${e.id}"]`); if (s) s.value = e.provider_id ?? ''; });
+
+  $('#providers').innerHTML = S.providers.map((p) => `<div class="row"><b>${esc(p.name)}</b><span class="muted">${esc(p.format)} · ${esc(p.base_url)} · ${esc(p.model)}${p.has_key ? ' · 🔑' : ''}</span><button class="danger" data-del="/api/providers/${p.id}">×</button></div>`).join('') || '<span class="muted">Nenhum. Funcionários usam a assinatura nativa.</span>';
+
+  $('#tasks').innerHTML = S.tasks.map((t) => `
+    <div class="emp">
+      <div class="row"><b>#${t.id}</b> ${esc(t.title)} <span class="chip ${esc(t.status)}">${esc(t.status)}</span></div>
+      <div class="muted">${esc(empName(t.employee_id))} · origem ${esc(t.origin)}${t.from_employee_id ? ' (' + esc(empName(t.from_employee_id)) + ')' : ''} · US$ ${t.cost_usd.toFixed(3)}</div>
+      ${t.status === 'running' ? `<form data-api="POST /api/tasks/${t.id}/message" class="row"><input name="text" placeholder="Tocar no ombro…" style="flex:1"><button>Enviar</button><button type="button" class="danger" data-stop="${t.id}">Parar</button></form>` : ''}
+      ${['queued','pending_approval'].includes(t.status) ? `<button class="danger" data-stop="${t.id}">Cancelar</button>` : ''}
+      ${t.result ? `<details><summary>resultado</summary><pre>${esc(t.result)}</pre></details>` : ''}
+    </div>`).join('') || '<span class="muted">Nenhuma task.</span>';
+
+  $('#approvals').innerHTML = S.approvals.map((a) => {
+    const p = a.payload, who = esc(empName(a.employee_id));
+    if (a.kind === 'question') return `<div class="approval"><b>${who} pergunta:</b><pre>${esc(p.question)}</pre>
+      <div class="row">${p.options.map((o) => `<button data-answer="${a.id}" data-text="${esc(o)}">${esc(o)}</button>`).join('')}</div>
+      <form data-api="POST /api/approvals/${a.id}" data-extra='{"decision":"answer"}' class="row"><input name="text" placeholder="Resposta" style="flex:1"><button class="primary">Responder</button></form></div>`;
+    if (a.kind === 'delegation') return `<div class="approval"><b>${esc(p.from ?? '?')} → ${esc(p.to)}</b> quer delegar: <b>${esc(p.title)}</b><pre>${esc(p.body)}</pre>
+      <div class="row"><button class="primary" data-decide="${a.id}" data-d="allow">Aprovar</button><button class="danger" data-decide="${a.id}" data-d="deny">Negar</button></div></div>`;
+    return `<div class="approval ${p.external ? 'external' : ''}"><b>${who}</b> quer usar <b>${esc(p.tool)}</b>${p.external ? ' <span class="chip waiting">externo</span>' : ''}${p.outsideRepo ? ' <span class="chip waiting">fora do repo</span>' : ''}
+      <pre>${esc(p.summary)}</pre>
+      <div class="row"><button class="primary" data-decide="${a.id}" data-d="allow">Permitir</button>
+      ${p.external ? '' : `<button data-decide="${a.id}" data-d="always" title="${esc(p.rule)}">Sempre permitir</button>`}
+      <button class="danger" data-decide="${a.id}" data-d="deny">Negar</button></div></div>`;
+  }).join('') || '<span class="muted">Nada pendente.</span>';
+}
+
+const LOG = {
+  'agent.text': (d) => d.text, 'agent.tool': (d) => `${d.name} ${d.summary}`, 'agent.activity': (d) => d.activity,
+  'colleague.ask': (d) => `${d.from} → ${d.to}: ${d.question}`, 'colleague.answer': (d) => `${d.from} → ${d.to}: ${d.answer}`,
+  'task.delegated': (d) => `${d.from} delegou #${d.delegatedTaskId} a ${d.to}: ${d.title}`,
+  'approval.requested': (d) => `pede ${d.kind}: ${d.payload.summary ?? d.payload.question ?? d.payload.title}`,
+  'task.finished': (d) => `${d.status}${d.costUsd ? ` (US$ ${d.costUsd.toFixed(3)})` : ''}`,
+};
+function logEvent(e) {
+  if (e.type === 'agent.activity' || e.type === 'state.changed') return;
+  const fmt = LOG[e.type], d = document.createElement('div');
+  const text = fmt ? fmt(e.data) : JSON.stringify(e.data);
+  d.innerHTML = `<span class="muted">${e.ts.slice(11, 19)}</span> <b>${esc(empName(e.employeeId))}</b>${e.taskId ? ` #${e.taskId}` : ''} <span class="muted">${esc(e.type)}</span> ${esc(String(text).slice(0, 600))}`;
+  const log = $('#log'), atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.append(d); if (log.children.length > 800) log.firstChild.remove();
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+let pending;
+const refresh = () => { clearTimeout(pending); pending = setTimeout(async () => { S = await api('GET', '/api/state'); render(); }, 120); };
+
+document.addEventListener('submit', async (ev) => {
+  const f = ev.target.closest('form[data-api]'); if (!f) return;
+  ev.preventDefault();
+  const [method, url] = f.dataset.api.split(' ');
+  const body = { ...JSON.parse(f.dataset.extra ?? '{}') };
+  for (const el of f.elements) {
+    if (!el.name) continue;
+    if (el.type === 'checkbox') body[el.name] = el.checked;
+    else if (['departmentId', 'employeeId', 'providerId'].includes(el.name)) body[el.name] = el.value ? Number(el.value) : null;
+    else body[el.name] = el.value;
+  }
+  await api(method, url, body); f.reset(); refresh();
+});
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  if (b.dataset.del && confirm('Remover?')) await api('DELETE', b.dataset.del);
+  else if (b.dataset.decide) await api('POST', `/api/approvals/${b.dataset.decide}`, { decision: b.dataset.d });
+  else if (b.dataset.answer) await api('POST', `/api/approvals/${b.dataset.answer}`, { decision: 'answer', text: b.dataset.text });
+  else if (b.dataset.stop) await api('POST', `/api/tasks/${b.dataset.stop}/stop`);
+  else if (b.dataset.onboard) await api('POST', `/api/employees/${b.dataset.onboard}/onboard`);
+  else return;
+  refresh();
+});
+document.addEventListener('change', async (ev) => {
+  const t = ev.target, d = t.dataset;
+  const id = d.empProvider ?? d.empModel ?? d.empAuto; if (!id) return;
+  const body = d.empProvider ? { providerId: t.value ? Number(t.value) : null } : d.empModel ? { model: t.value } : { autoEdit: t.checked };
+  await api('PATCH', `/api/employees/${id}`, body); refresh();
+});
+
+const es = new EventSource('/api/events');
+es.onopen = () => { $('#conn').textContent = 'ao vivo'; refresh(); };
+es.onerror = () => ($('#conn').textContent = 'reconectando…');
+es.onmessage = (m) => {
+  const e = JSON.parse(m.data);
+  logEvent(e);
+  if (e.type === 'agent.activity') { const emp = S.employees.find((x) => x.id === e.employeeId); if (emp) { emp.activity = e.data.activity; render(); } }
+  else if (!['agent.text', 'agent.tool', 'run.started'].includes(e.type)) refresh();
+};
+</script>
+</body>
+</html>

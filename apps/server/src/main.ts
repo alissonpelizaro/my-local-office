@@ -1,0 +1,165 @@
+import fs from 'node:fs';
+import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import path from 'node:path';
+import { countTokens, proxyMessages } from './bridge.js';
+import { eventsAfter, eventsOfTask, subscribe } from './bus.ts';
+import * as chat from './chat.ts';
+import { PORT } from './config.ts';
+import { get, type Provider } from './db.ts';
+import { discover, importRepos } from './importer.ts';
+import { handleMcp } from './mcp.ts';
+import { models, refreshModels } from './models.ts';
+import { startNotifications } from './notify.ts';
+import * as office from './office.ts';
+import { stopAll } from './runner.ts';
+import { settings, updateSettings } from './settings.ts';
+
+const CONSOLE = path.resolve(import.meta.dirname, '../public/index.html');
+const WEB = path.resolve(import.meta.dirname, '../../web/dist');
+const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json',
+  '.woff2': 'font/woff2',
+};
+
+function send(res: ServerResponse, status: number, body: unknown) {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body ?? { ok: true }));
+}
+
+async function readJson(req: IncomingMessage, limit = 1e6) {
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const c of req) {
+    if ((size += c.length) > limit) throw new office.HttpError(413, 'corpo muito grande');
+    chunks.push(c);
+  }
+  if (!chunks.length) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new office.HttpError(400, 'JSON inválido');
+  }
+}
+
+function streamEvents(req: IncomingMessage, res: ServerResponse, url: URL) {
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  const write = (e: { id: number }) => res.write(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
+  const cursor = req.headers['last-event-id'] ?? url.searchParams.get('after');
+  for (const e of eventsAfter(cursor == null ? null : Number(cursor), 1000)) write(e);
+  const off = subscribe(write);
+  const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+  req.on('close', () => {
+    off();
+    clearInterval(ping);
+  });
+}
+
+// Build do apps/web quando existe (SPA: rota desconhecida cai no index.html); sem build, o console F0.
+function serveStatic(res: ServerResponse, pathname: string) {
+  if (!fs.existsSync(WEB)) return serveFile(res, CONSOLE);
+  const file = path.join(WEB, path.normalize(pathname).replace(/^(\.\.[/\\])+/, ''));
+  const target = file.startsWith(WEB) && fs.statSync(file, { throwIfNoEntry: false })?.isFile() ? file : path.join(WEB, 'index.html');
+  serveFile(res, target, target.includes(`${path.sep}assets${path.sep}`));
+}
+
+function serveFile(res: ServerResponse, file: string, immutable = false) {
+  res.writeHead(200, {
+    'content-type': MIME[path.extname(file)] ?? 'application/octet-stream',
+    'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+  });
+  fs.createReadStream(file).pipe(res);
+}
+
+// Ponte para provedores OpenAI-compatíveis: o Claude Code fala Messages com /bridge/:id e a ponte traduz.
+async function bridge(req: IncomingMessage, res: ServerResponse, providerId: number, countOnly: boolean) {
+  const p = get<Provider>('SELECT * FROM providers WHERE id = ?', providerId);
+  if (p?.format !== 'openai') return send(res, 404, { type: 'error', error: { type: 'not_found_error', message: 'provedor OpenAI não encontrado' } });
+  const body = await readJson(req, 64e6);
+  if (countOnly) return send(res, 200, countTokens(body));
+  await proxyMessages(body, res, { baseUrl: p.base_url, apiKey: p.api_key });
+}
+
+type Handler = (body: any, params: string[], url: URL) => unknown;
+const routes: [string, RegExp, Handler][] = [
+  ['GET', /^\/api\/state$/, () => office.state()],
+  ['PATCH', /^\/api\/settings$/, (b) => updateSettings(b)],
+  ['POST', /^\/api\/departments$/, (b) => office.createDepartment(b)],
+  ['PATCH', /^\/api\/departments\/(\d+)$/, (b, [id]) => office.updateDepartment(Number(id), b)],
+  ['DELETE', /^\/api\/departments\/(\d+)$/, (_, [id]) => office.deleteDepartment(Number(id))],
+  ['POST', /^\/api\/providers$/, (b) => office.saveProvider(b)],
+  ['PATCH', /^\/api\/providers\/(\d+)$/, (b, [id]) => office.saveProvider({ ...b, id: Number(id) })],
+  ['DELETE', /^\/api\/providers\/(\d+)$/, (_, [id]) => office.deleteProvider(Number(id))],
+  ['GET', /^\/api\/discover$/, (_, __, url) => discover(url.searchParams.get('root') || settings().importRoot)],
+  ['POST', /^\/api\/import$/, (b) => importRepos(b.items)],
+  ['POST', /^\/api\/employees$/, (b) => office.createEmployee(b)],
+  ['PATCH', /^\/api\/employees\/(\d+)$/, (b, [id]) => office.updateEmployee(Number(id), b)],
+  ['DELETE', /^\/api\/employees\/(\d+)$/, (_, [id]) => office.deleteEmployee(Number(id))],
+  ['POST', /^\/api\/employees\/(\d+)\/onboard$/, (_, [id]) => office.onboard(Number(id))],
+  ['GET', /^\/api\/employees\/(\d+)\/threads$/, (_, [id]) => chat.threads(Number(id))],
+  ['POST', /^\/api\/employees\/(\d+)\/threads$/, (b, [id]) => chat.startThread(Number(id), b.text, b.resumeSessionId)],
+  ['GET', /^\/api\/employees\/(\d+)\/sessions$/, (_, [id]) => chat.nativeSessions(Number(id))],
+  ['GET', /^\/api\/threads\/(\d+)$/, (_, [id]) => chat.thread(Number(id))],
+  ['POST', /^\/api\/threads\/(\d+)\/messages$/, (b, [id]) => chat.sendToThread(Number(id), b.text)],
+  ['GET', /^\/api\/models$/, () => models()],
+  ['POST', /^\/api\/models\/refresh$/, () => refreshModels()],
+  ['POST', /^\/api\/tasks$/, (b) => office.createTask({ employeeId: b.employeeId, title: b.title, body: b.body })],
+  ['GET', /^\/api\/tasks\/(\d+)\/events$/, (_, [id]) => eventsOfTask(Number(id))],
+  ['POST', /^\/api\/tasks\/(\d+)\/message$/, (b, [id]) => office.messageTask(Number(id), b.text)],
+  ['POST', /^\/api\/tasks\/(\d+)\/followup$/, (b, [id]) => office.followupTask(Number(id), b.text)],
+  ['POST', /^\/api\/tasks\/(\d+)\/stop$/, (_, [id]) => office.stopTask(Number(id))],
+  ['DELETE', /^\/api\/tasks\/(\d+)\/worktree$/, (_, [id]) => office.removeTaskWorktree(Number(id))],
+  ['GET', /^\/api\/costs$/, (_, __, url) => office.costs(Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30)))],
+  ['POST', /^\/api\/approvals\/(\d+)$/, (b, [id]) => office.resolveApproval(Number(id), b.decision, b.text)],
+];
+
+const server = http.createServer(async (req, res) => {
+  // Este servidor executa agentes na máquina: só aceita a própria origem (barra DNS rebinding e CSRF).
+  const origin = req.headers.origin?.replace(/^https?:\/\//, '');
+  if (!HOSTS.has(req.headers.host ?? '') || (origin && !HOSTS.has(origin))) return send(res, 403, { error: 'origem não permitida' });
+
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const p = url.pathname;
+  try {
+    if (req.method === 'GET' && p === '/api/events') return streamEvents(req, res, url);
+    if (p === '/mcp') return req.method === 'POST' ? await handleMcp(req, res, await readJson(req, 16e6)) : send(res, 405, { error: 'use POST' });
+    const b = req.method === 'POST' && p.match(/^\/bridge\/(\d+)\/v1\/messages(\/count_tokens)?$/);
+    if (b) return await bridge(req, res, Number(b[1]), Boolean(b[2]));
+
+    for (const [method, re, handler] of routes) {
+      const m = req.method === method && p.match(re);
+      if (m) return send(res, 200, await handler(method === 'GET' ? {} : await readJson(req), m.slice(1), url));
+    }
+    if (p.startsWith('/api/')) return send(res, 404, { error: 'não encontrado' });
+    if (req.method === 'GET' && p === '/console') return serveFile(res, CONSOLE);
+    if (req.method === 'GET') return serveStatic(res, p);
+    send(res, 404, { error: 'não encontrado' });
+  } catch (e: any) {
+    if (!(e instanceof office.HttpError) && !e.status) console.error(e);
+    if (!res.headersSent) send(res, e.status ?? 500, { error: e.message });
+  }
+});
+
+server.listen(PORT, '127.0.0.1', () => console.log(`my-local-office em http://127.0.0.1:${PORT}`));
+
+startNotifications();
+refreshModels();
+setInterval(refreshModels, 86_400_000).unref();
+// Fichas desatualizadas: confere pouco depois de subir e uma vez por dia.
+setTimeout(office.refreshProfiles, 30_000).unref();
+setInterval(office.refreshProfiles, 86_400_000).unref();
+
+// Processos `claude` filhos não sobrevivem ao server: sem o MCP dele, ficariam rodando às cegas.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    stopAll();
+    server.close();
+    setTimeout(() => process.exit(0), 500).unref();
+  });
+}
