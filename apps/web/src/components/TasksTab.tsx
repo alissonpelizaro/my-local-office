@@ -7,6 +7,7 @@ import { NewTaskForm } from './NewTaskForm';
 import { Button, Card, Chip, cx, Dot, Empty, Input } from './ui';
 
 const COLUMNS: { title: string; statuses: TaskStatus[] }[] = [
+  { title: 'Agendadas', statuses: ['scheduled'] },
   { title: 'Aguardando aprovação', statuses: ['pending_approval'] },
   { title: 'Na fila', statuses: ['queued'] },
   { title: 'Executando', statuses: ['running'] },
@@ -138,7 +139,7 @@ function TaskDetail({ taskId }: { taskId: number }) {
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => openChat(t.employee_id, { kind: 'thread', id: t.thread_id })}>💬 Abrir conversa</Button>
         {events.length > 0 && <Button onClick={() => startReplay(t.id)}>▶️ Assistir no escritório</Button>}
-        {(t.status === 'running' || t.status === 'queued' || t.status === 'pending_approval') && (
+        {(t.status === 'running' || t.status === 'scheduled' || t.status === 'queued' || t.status === 'pending_approval') && (
           <Button variant="danger" onClick={() => act(() => api('POST', `/api/tasks/${t.id}/stop`))}>
             {t.status === 'running' ? 'Parar' : 'Cancelar'}
           </Button>

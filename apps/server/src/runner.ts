@@ -51,6 +51,10 @@ export function summarize(input: any): string {
   return String(s ?? JSON.stringify(input ?? {})).slice(0, 300);
 }
 
+// Dados extras que a conversa mostra melhor que o resumo: descrição do comando e o plano (TodoWrite).
+const toolExtra = (name: string, input: any) =>
+  name === 'Bash' && input?.description ? { description: String(input.description).slice(0, 200) } : name === 'TodoWrite' && Array.isArray(input?.todos) ? { todos: input.todos.slice(0, 30) } : {};
+
 const userMessage = (text: string) => JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n';
 
 export type StartRun = {
@@ -121,7 +125,7 @@ export function startRun(o: StartRun): Run {
         if (b.type === 'text' && b.text.trim()) {
           publish('agent.text', { kind: o.kind, text: b.text }, ids);
         } else if (b.type === 'tool_use') {
-          publish('agent.tool', { kind: o.kind, name: b.name, summary: summarize(b.input) }, ids);
+          publish('agent.tool', { kind: o.kind, name: b.name, summary: summarize(b.input), ...toolExtra(b.name, b.input) }, ids);
           if (o.kind === 'task') setActivity(o.employee.id, TOOL_ACTIVITY[b.name] ?? 'running', b.name);
         }
       }

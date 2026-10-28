@@ -30,7 +30,7 @@ export type Provider = {
   has_key: boolean;
 };
 
-export type TaskStatus = 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'scheduled' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export type Task = {
   id: number;
@@ -49,6 +49,7 @@ export type Task = {
   worktree: string | null;
   thread_id: number;
   resume_session_id: string | null;
+  run_at: string | null;
 };
 
 export type Thread = {
@@ -74,8 +75,11 @@ export type Models = { cli: string | null; aliases: { alias: string; model: stri
 
 export type ChatTarget = { kind: 'new' } | { kind: 'thread'; id: number } | { kind: 'native'; sessionId: string; title: string };
 
-export type ToolPayload = { tool: string; input: unknown; summary: string; external: boolean; outsideRepo: boolean; rule: string };
-export type QuestionPayload = { question: string; options: string[] };
+export type ToolDetail = { description?: string; command?: string; file?: string; before?: string; after?: string; url?: string };
+export type ToolPayload = { tool: string; input: unknown; summary: string; detail?: ToolDetail; external: boolean; outsideRepo: boolean; rule: string };
+// questions: pergunta estruturada do Claude Code (AskUserQuestion); sem ela, pergunta simples (ask_boss).
+export type Question = { question: string; header?: string; options?: { label: string; description?: string }[]; multiSelect?: boolean };
+export type QuestionPayload = { question: string; options: string[]; questions?: Question[] };
 export type DelegationPayload = { taskId: number; from: string | null; to: string; title: string; body: string };
 
 type ApprovalBase = { id: number; employee_id: number | null; task_id: number | null; status: string; created_at: string };
@@ -90,6 +94,7 @@ export type Settings = {
   importRoot: string;
   notifyApprovals: boolean;
   notifyTaskFinished: boolean;
+  autoAllowReadOnly: boolean;
   profileRefreshCommits: number;
 };
 

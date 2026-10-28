@@ -109,14 +109,14 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/threads\/(\d+)\/messages$/, (b, [id]) => chat.sendToThread(Number(id), b.text)],
   ['GET', /^\/api\/models$/, () => models()],
   ['POST', /^\/api\/models\/refresh$/, () => refreshModels()],
-  ['POST', /^\/api\/tasks$/, (b) => office.createTask({ employeeId: b.employeeId, title: b.title, body: b.body })],
+  ['POST', /^\/api\/tasks$/, (b) => office.createTask({ employeeId: b.employeeId, title: b.title, body: b.body, runAt: b.runAt })],
   ['GET', /^\/api\/tasks\/(\d+)\/events$/, (_, [id]) => eventsOfTask(Number(id))],
   ['POST', /^\/api\/tasks\/(\d+)\/message$/, (b, [id]) => office.messageTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/followup$/, (b, [id]) => office.followupTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/stop$/, (_, [id]) => office.stopTask(Number(id))],
   ['DELETE', /^\/api\/tasks\/(\d+)\/worktree$/, (_, [id]) => office.removeTaskWorktree(Number(id))],
   ['GET', /^\/api\/costs$/, (_, __, url) => office.costs(Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30)))],
-  ['POST', /^\/api\/approvals\/(\d+)$/, (b, [id]) => office.resolveApproval(Number(id), b.decision, b.text)],
+  ['POST', /^\/api\/approvals\/(\d+)$/, (b, [id]) => office.resolveApproval(Number(id), b.decision, b.text, b.answers)],
 ];
 
 const server = http.createServer(async (req, res) => {
@@ -149,6 +149,8 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => console.log(`my-local-office em http://127.0.0.1:${PORT}`));
 
 startNotifications();
+office.releaseScheduled();
+setInterval(office.releaseScheduled, 30_000).unref();
 refreshModels();
 setInterval(refreshModels, 86_400_000).unref();
 // Fichas desatualizadas: confere pouco depois de subir e uma vez por dia.

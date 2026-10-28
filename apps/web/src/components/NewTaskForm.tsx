@@ -8,6 +8,7 @@ export function NewTaskForm({ employeeId, onCreated }: { employeeId?: number; on
   const [target, setTarget] = useState<number | ''>(employeeId ?? '');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [runAt, setRunAt] = useState('');
   const to = employeeId ?? target;
 
   return (
@@ -16,10 +17,11 @@ export function NewTaskForm({ employeeId, onCreated }: { employeeId?: number; on
       onSubmit={async (e) => {
         e.preventDefault();
         if (!to || !title.trim()) return;
-        const t = await act(() => api<Task>('POST', '/api/tasks', { employeeId: to, title, body }));
+        const t = await act(() => api<Task>('POST', '/api/tasks', { employeeId: to, title, body, runAt: runAt ? new Date(runAt).toISOString() : undefined }));
         if (t) {
           setTitle('');
           setBody('');
+          setRunAt('');
           onCreated?.(t);
         }
       }}
@@ -36,8 +38,9 @@ export function NewTaskForm({ employeeId, onCreated }: { employeeId?: number; on
       )}
       <Input placeholder="O que fazer" value={title} onChange={(e) => setTitle(e.target.value)} required />
       <Textarea rows={3} placeholder="Detalhes, contexto, critério de pronto" value={body} onChange={(e) => setBody(e.target.value)} />
+      <Input type="datetime-local" title="Agendar para (vazio = agora)" value={runAt} onChange={(e) => setRunAt(e.target.value)} />
       <Button variant="primary" disabled={!to || !title.trim()}>
-        Delegar task
+        {runAt ? 'Agendar task' : 'Delegar task'}
       </Button>
     </form>
   );

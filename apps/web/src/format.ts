@@ -14,6 +14,7 @@ export const ACTIVITY: Record<Activity, { label: string; icon: string }> = {
 };
 
 export const STATUS: Record<TaskStatus, { label: string; tone: 'default' | 'red' | 'green' | 'blue' | 'amber' }> = {
+  scheduled: { label: 'agendada', tone: 'amber' },
   pending_approval: { label: 'aguardando aprovação', tone: 'amber' },
   queued: { label: 'na fila', tone: 'default' },
   running: { label: 'executando', tone: 'blue' },

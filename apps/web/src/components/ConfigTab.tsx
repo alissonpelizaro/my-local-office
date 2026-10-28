@@ -344,6 +344,11 @@ function SettingsSection() {
             <input type="checkbox" checked={form.notifyTaskFinished} onChange={(e) => save({ notifyTaskFinished: e.target.checked })} /> Quando uma task termina
           </label>
         </Field>
+        <Field label="Comandos só de leitura" hint="ls, cat, grep, find, git log/diff/status… (inclusive encadeados) sem pedir permissão. Redirecionar para arquivo, subshell ou caminho fora do repo continua pedindo.">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.autoAllowReadOnly} onChange={(e) => save({ autoAllowReadOnly: e.target.checked })} /> Liberar automaticamente
+          </label>
+        </Field>
         <Field label="Atualizar fichas a cada N commits" hint="Fichas automáticas são refeitas (haiku) quando o repo anda isso. 0 desliga.">
           <Input
             type="number"
