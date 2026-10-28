@@ -4,7 +4,7 @@ import { CostsTab } from './components/CostsTab';
 import { OfficeTab } from './components/OfficeTab';
 import { TasksTab } from './components/TasksTab';
 import { cx } from './components/ui';
-import { connect, selectEmployee, setTab, type Tab, useOffice } from './store';
+import { connect, selectEmployee, setTab, setTheme, type Tab, type Theme, useOffice } from './store';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'office', label: '🏢 Escritório' },
@@ -81,8 +81,26 @@ function Header() {
           <span className={cx('h-2 w-2 rounded-full', connected ? 'bg-green-500' : 'bg-amber-500')} />
           {connected ? 'ao vivo' : 'offline'}
         </span>
+        <ThemeToggle />
       </div>
     </header>
+  );
+}
+
+const THEME_CYCLE: Theme[] = ['light', 'dark', 'system'];
+const THEME_ICON: Record<Theme, string> = { light: '☀️', dark: '🌙', system: '🖥️' };
+const THEME_LABEL: Record<Theme, string> = { light: 'Claro', dark: 'Escuro', system: 'Sistema' };
+
+function ThemeToggle() {
+  const theme = useOffice((s) => s.theme);
+  return (
+    <button
+      onClick={() => setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])}
+      title={`Tema: ${THEME_LABEL[theme]} (clique para alternar)`}
+      className="rounded-md px-2 py-1 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+    >
+      {THEME_ICON[theme]}
+    </button>
   );
 }
 
