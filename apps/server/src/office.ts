@@ -4,7 +4,7 @@ import { activities, publish, setActivity } from './bus.ts';
 import { CONSULT_TIMEOUT_MS, MAX_CONSULT_DEPTH } from './config.ts';
 import { all, type Approval, type Department, type Employee, get, type Provider, run, type Task } from './db.ts';
 import { git } from './git.ts';
-import { allowedByRule, EDIT_TOOLS, isExternal, isInside, ruleFor } from './policy.ts';
+import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, ruleFor } from './policy.ts';
 import { publicProvider } from './providers.ts';
 import { type Run, type RunContext, startRun, summarize } from './runner.ts';
 import { settings } from './settings.ts';
@@ -330,6 +330,7 @@ export async function approveTool(ctx: RunContext, name: string, input: any) {
   const external = isExternal(name, input);
   const file = input?.file_path ?? input?.notebook_path;
   const inRepo = typeof file === 'string' && isInside(ctx.cwd, file);
+  if (name === 'Bash' && settings().autoAllowReadOnly && isReadOnlyCommand(input?.command, ctx.cwd)) return allow(input);
   if (!external && allowedByRule(JSON.parse(e.allow_rules), name, input)) return allow(input);
   if (!external && EDIT_TOOLS.has(name) && inRepo && e.auto_edit) return allow(input);
 
@@ -420,6 +421,7 @@ export async function askBoss(ctx: RunContext, question: string, options?: strin
   if (ctx.kind !== 'task') throw new Error('Indisponível em consulta.');
   const d = await waitApproval('question', ctx.employee.id, ctx.taskId, { question: required(question, 'question'), options: options ?? [] });
   setActivity(ctx.employee.id, 'thinking');
+  if (d.status === 'denied') return 'O chefe preferiu responder pela conversa; aguarde a próxima mensagem dele.';
   return d.answer ?? 'O chefe não respondeu (pergunta expirou).';
 }
 
@@ -437,22 +439,30 @@ type TaskInput = {
   fromEmployeeId?: number | null;
   parentTaskId?: number | null;
   resumeSessionId?: string | null;
+  runAt?: string | null;
 };
 
 export function createTask(b: TaskInput) {
   if (!employee(Number(b.employeeId))) throw new HttpError(404, 'funcionário não encontrado');
   const origin = b.origin ?? 'user';
   const needsApproval = origin === 'agent' && settings().delegationNeedsApproval;
+  let runAt: string | null = null;
+  if (b.runAt) {
+    const ms = Date.parse(b.runAt);
+    if (Number.isNaN(ms)) throw new HttpError(400, 'runAt inválido');
+    if (ms > Date.now()) runAt = new Date(ms).toISOString();
+  }
   const { lastInsertRowid } = run(
-    'INSERT INTO tasks (employee_id, origin, from_employee_id, parent_task_id, title, body, status, resume_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO tasks (employee_id, origin, from_employee_id, parent_task_id, title, body, status, resume_session_id, run_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     Number(b.employeeId),
     origin,
     b.fromEmployeeId ?? null,
     b.parentTaskId ?? null,
     required(b.title, 'title'),
     b.body ?? '',
-    needsApproval ? 'pending_approval' : 'queued',
+    needsApproval ? 'pending_approval' : runAt ? 'scheduled' : 'queued',
     b.resumeSessionId ?? null,
+    runAt,
   );
   // Continuação do mesmo funcionário fica na conversa da origem; o resto abre conversa nova.
   const parent = b.parentTaskId ? get<Task>('SELECT * FROM tasks WHERE id = ?', b.parentTaskId) : undefined;
@@ -463,10 +473,20 @@ export function createTask(b: TaskInput) {
   if (needsApproval) {
     const from = b.fromEmployeeId ? employee(b.fromEmployeeId)?.name : null;
     createApproval('delegation', t.employee_id, null, { taskId: t.id, from, to: employee(t.employee_id)?.name, title: t.title, body: t.body });
-  } else {
+  } else if (!runAt) {
     pump();
   }
   return t;
+}
+
+// Tasks agendadas entram na fila quando chega a hora.
+export function releaseScheduled() {
+  const due = all<Task>(`SELECT * FROM tasks WHERE status = 'scheduled' AND run_at <= ?`, now());
+  for (const t of due) {
+    run(`UPDATE tasks SET status = 'queued' WHERE id = ?`, t.id);
+    publish('state.changed');
+  }
+  if (due.length) pump();
 }
 
 // O Claude Code carrega CLAUDE.md (global e do repo) sozinho, mas não AGENTS.md: vai no system prompt,
@@ -492,6 +512,7 @@ function persona(e: Employee, wt?: Worktree) {
     '- ask_colleague: pergunta algo a um colega (use em vez de ler ou editar outros repositórios);',
     '- delegate_task: pede uma mudança no repositório de outro colega;',
     '- ask_boss: leva ao chefe (o usuário) uma decisão que não cabe a você.',
+    'Para explorar o código use Read, Glob e Grep (não pedem permissão) em vez de ls/cat/find no shell.',
     'O chefe acompanha seu trabalho pelo escritório e aprova as ações que precisarem de permissão.',
   ]
     .filter(Boolean)
@@ -653,7 +674,7 @@ export function stopTask(id: number) {
     return r.stop();
   }
   const t = get<Task>('SELECT * FROM tasks WHERE id = ?', id);
-  if (!t || !['queued', 'pending_approval'].includes(t.status)) throw new HttpError(409, 'task não pode ser cancelada');
+  if (!t || !['scheduled', 'queued', 'pending_approval'].includes(t.status)) throw new HttpError(409, 'task não pode ser cancelada');
   run(`UPDATE tasks SET status = 'cancelled', finished_at = ? WHERE id = ?`, now(), id);
   run(`UPDATE approvals SET status = 'expired', decided_at = ? WHERE kind = 'delegation' AND status = 'pending' AND json_extract(payload, '$.taskId') = ?`, now(), id);
   publish('task.finished', { status: 'cancelled' }, taskIds(t));

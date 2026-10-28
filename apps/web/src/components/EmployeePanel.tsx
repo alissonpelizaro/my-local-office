@@ -94,7 +94,7 @@ function ActivityView({ employeeId }: { employeeId: number }) {
               <button className="text-xs" title="Detalhes da task" onClick={() => openTask(t.id)}>
                 📋
               </button>
-              {!['queued', 'pending_approval'].includes(t.status) && (
+              {!['scheduled', 'queued', 'pending_approval'].includes(t.status) && (
                 <button className="text-xs" title="Assistir replay no escritório" onClick={() => startReplay(t.id)}>
                   ▶️
                 </button>

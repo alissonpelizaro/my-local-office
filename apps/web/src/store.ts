@@ -60,6 +60,7 @@ const EMPTY: OfficeState = {
     importRoot: '~/webprojects',
     notifyApprovals: true,
     notifyTaskFinished: true,
+    autoAllowReadOnly: true,
     profileRefreshCommits: 40,
   },
 };

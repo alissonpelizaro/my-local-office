@@ -111,6 +111,7 @@ addColumn('tasks', 'worktree_base', 'TEXT');
 addColumn('tasks', 'thread_id', 'INTEGER'); // conversa: a task raiz e as continuações dela
 addColumn('tasks', 'resume_session_id', 'TEXT'); // sessão do Claude Code (de fora do escritório) a retomar
 addColumn('tasks', 'cwd', 'TEXT'); // pasta onde o turno rodou: a sessão do Claude fica guardada por pasta
+addColumn('tasks', 'run_at', 'TEXT'); // agendada: só entra na fila a partir deste instante (ISO UTC)
 addColumn('usage', 'session_id', 'TEXT');
 
 // Tasks anteriores às conversas: continuação do mesmo funcionário herda a conversa da origem.
@@ -152,7 +153,7 @@ export type Employee = {
   profile_source: 'auto' | 'manual';
   profile_commit: string | null;
 };
-export type TaskStatus = 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'scheduled' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type Task = {
   id: number;
   employee_id: number;
@@ -172,6 +173,7 @@ export type Task = {
   thread_id: number;
   resume_session_id: string | null;
   cwd: string | null;
+  run_at: string | null;
 };
 export type Approval = {
   id: number;

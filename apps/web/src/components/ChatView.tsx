@@ -1,23 +1,50 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ACTIVITY, money, names, STATUS, time } from '../format';
 import { act, api, openChat, startReplay, toast, useOffice } from '../store';
-import type { Employee, OfficeEvent, Task, Thread, ThreadDetail } from '../types';
-import { ApprovalCard } from './ApprovalCard';
+import type { Approval, Employee, OfficeEvent, Task, Thread, ThreadDetail } from '../types';
+import { ApprovalCard, QuestionCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
 import { Button, Chip, cx } from './ui';
 
+type Todo = { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string };
 type Row =
-  | { kind: 'user'; key: string; text: string; who: string; ts: string; live?: boolean }
-  | { kind: 'agent'; key: string; text: string; ts: string }
+  | { kind: 'user'; key: string; text: string; who: string; ts: string; note?: string }
+  | { kind: 'agent'; key: string; text: string }
   | { kind: 'tools'; key: string; items: OfficeEvent[] }
-  | { kind: 'note'; key: string; icon: string; text: string; detail?: string }
-  | { kind: 'approval'; key: string; approvalId: number; summary: string }
+  | { kind: 'todos'; key: string; todos: Todo[] }
+  | { kind: 'note'; key: string; icon: string; text: string; detail?: string; tone?: 'warn' }
+  | { kind: 'question'; key: string; approvalId: number; text: string }
+  | { kind: 'approval'; key: string; approvalId: number }
   | { kind: 'end'; key: string; status: string; cost: number; error?: string };
+
+// O que o agente fez entre uma fala e outra, em linguagem natural.
+const ACTIONS: [RegExp, string, string, string][] = [
+  [/^Read$/, '📖', '1 leitura', '# leituras'],
+  [/^(Grep|Glob)$/, '🔍', '1 busca', '# buscas'],
+  [/^Bash$/, '⚙️', '1 comando', '# comandos'],
+  [/^(Edit|MultiEdit|Write|NotebookEdit)$/, '✏️', '1 edição', '# edições'],
+  [/^(WebFetch|WebSearch)$/, '🌐', '1 consulta na web', '# consultas na web'],
+  [/^(Task|Agent)$/, '🤖', '1 subagente', '# subagentes'],
+  [/^mcp__office__/, '🤝', '1 ação no escritório', '# ações no escritório'],
+  [/.*/, '🔧', '1 ferramenta', '# ferramentas'],
+];
+const actionOf = (name: string) => ACTIONS.find(([re]) => re.test(name))!;
+const HIDDEN_TOOLS = new Set(['AskUserQuestion', 'TodoWrite', 'mcp__office__ask_boss']);
+
+function summarizeTools(items: OfficeEvent[]) {
+  const counts = new Map<(typeof ACTIONS)[number], number>();
+  for (const i of items) {
+    const a = actionOf(i.data.name);
+    counts.set(a, (counts.get(a) ?? 0) + 1);
+  }
+  return [...counts].map(([[, icon, one, many], n]) => `${icon} ${n === 1 ? one : many.replace('#', String(n))}`).join(' · ');
+}
 
 // Linha do tempo da conversa: o que você disse, o que o agente respondeu e o que ele fez no caminho.
 function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number | null) => string): Row[] {
   const rows: Row[] = [];
   let tools: OfficeEvent[] = [];
+  let todosAt = -1; // um checklist por turno, sempre o mais recente
   const flush = () => {
     if (tools.length) rows.push({ kind: 'tools', key: `t${tools[0].id}`, items: tools });
     tools = [];
@@ -28,6 +55,7 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
     switch (e.type) {
       case 'task.created':
         flush();
+        todosAt = -1;
         rows.push({
           kind: 'user',
           key: `u${e.id}`,
@@ -38,19 +66,27 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
         break;
       case 'boss.message':
         flush();
-        rows.push({ kind: 'user', key: `u${e.id}`, text: d.text, ts: e.ts, who: 'Você', live: true });
+        rows.push({ kind: 'user', key: `u${e.id}`, text: d.text, ts: e.ts, who: 'Você', note: 'durante o trabalho' });
         break;
       case 'agent.text':
         if (!mine || d.kind !== 'task') break;
         flush();
-        rows.push({ kind: 'agent', key: `a${e.id}`, text: d.text, ts: e.ts });
+        rows.push({ kind: 'agent', key: `a${e.id}`, text: d.text });
         break;
       case 'agent.tool':
-        if (mine && d.kind === 'task') tools.push(e);
+        if (!mine || d.kind !== 'task') break;
+        if (d.name === 'TodoWrite' && d.todos) {
+          flush();
+          const row: Row = { kind: 'todos', key: `d${e.id}`, todos: d.todos };
+          if (todosAt >= 0) rows.splice(todosAt, 1);
+          todosAt = rows.push(row) - 1;
+        } else if (!HIDDEN_TOOLS.has(d.name)) {
+          tools.push(e);
+        }
         break;
       case 'colleague.ask':
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: '❓', text: `Perguntou a ${d.to}`, detail: d.question });
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: '🤝', text: `Perguntou a ${d.to}`, detail: d.question });
         break;
       case 'colleague.answer':
         flush();
@@ -60,16 +96,17 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
         flush();
         rows.push({ kind: 'note', key: `n${e.id}`, icon: '📄', text: `Delegou a ${d.to}: ${d.title}` });
         break;
-      case 'approval.requested': {
+      case 'approval.requested':
         flush();
-        const p = d.payload;
-        const summary = d.kind === 'tool' ? `permissão para ${p.tool}: ${p.summary}` : d.kind === 'question' ? `pergunta: ${p.question}` : `delegação: ${p.title}`;
-        rows.push({ kind: 'approval', key: `p${e.id}`, approvalId: d.id, summary });
+        if (d.kind === 'question') rows.push({ kind: 'question', key: `q${e.id}`, approvalId: d.id, text: d.payload.question });
+        else rows.push({ kind: 'approval', key: `p${e.id}`, approvalId: d.id });
         break;
-      }
       case 'approval.resolved':
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: d.status === 'denied' ? '🚫' : d.status === 'expired' ? '⌛' : '👍', text: d.answer ? `Você respondeu: ${d.answer}` : `Pedido ${d.status === 'denied' ? 'negado' : d.status === 'expired' ? 'expirou' : 'aprovado'}` });
+        if (d.kind === 'question' && d.status === 'answered') rows.push({ kind: 'user', key: `u${e.id}`, text: d.answer, ts: e.ts, who: 'Você' });
+        else if (d.kind === 'question') rows.push({ kind: 'note', key: `n${e.id}`, icon: '💬', text: d.status === 'expired' ? 'A pergunta expirou' : 'Você preferiu responder pela conversa' });
+        else if (d.status === 'denied') rows.push({ kind: 'note', key: `n${e.id}`, icon: '🚫', text: d.answer ? `Você negou: ${d.answer}` : 'Você negou', tone: 'warn' });
+        else if (d.status === 'expired') rows.push({ kind: 'note', key: `n${e.id}`, icon: '⌛', text: 'Pedido expirou' });
         break;
       case 'task.worktree':
         flush();
@@ -91,7 +128,7 @@ export function ChatView({ employee }: { employee: Employee }) {
   const live = useOffice((s) => s.events);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const threadId = target?.kind === 'thread' ? target.id : null;
-  const name = names(state);
+  const name = useMemo(() => names(state), [state]);
 
   // Sem conversa escolhida, abre a mais recente (ou uma nova).
   useEffect(() => {
@@ -121,25 +158,47 @@ export function ChatView({ employee }: { employee: Employee }) {
 
   const rows = useMemo(() => buildRows(events, employee.id, name), [events, employee.id, name]);
   const running = tasks.find((t) => t.status === 'running');
-  const queued = tasks.find((t) => t.status === 'queued' || t.status === 'pending_approval');
+  const queued = tasks.find((t) => t.status === 'scheduled' || t.status === 'queued' || t.status === 'pending_approval');
   const cost = tasks.reduce((s, t) => s + t.cost_usd, 0);
-  const pending = new Set(state.approvals.map((a) => a.id));
+  const taskIds = new Set(tasks.map((t) => t.id));
+  const waiting = state.approvals.filter((a) => a.task_id != null && taskIds.has(a.task_id));
+  const question = waiting.find((a): a is Extract<Approval, { kind: 'question' }> => a.kind === 'question');
 
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   useEffect(() => {
     if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [rows.length, running?.id]);
+  }, [rows.length, running?.id, waiting.length]);
 
   const send = async (text: string) => {
+    stick.current = true;
+    // Pergunta pendente: o que você escreve vira a resposta dela.
+    if (question) {
+      const q = question.payload.questions?.[0]?.question;
+      const body = q ? { decision: 'answer', answers: { [q]: text } } : { decision: 'answer', text };
+      return (await act(() => api('POST', `/api/approvals/${question.id}`, body))) !== undefined;
+    }
     const task =
       target?.kind === 'thread'
         ? await act(() => api<Task>('POST', `/api/threads/${target.id}/messages`, { text }))
         : await act(() => api<Task>('POST', `/api/employees/${employee.id}/threads`, { text, resumeSessionId: target?.kind === 'native' ? target.sessionId : undefined }));
     if (task && target?.kind !== 'thread') openChat(employee.id, { kind: 'thread', id: task.thread_id });
-    stick.current = true;
     return !!task;
   };
+
+  const status = question
+    ? '❓ esperando sua resposta'
+    : waiting.length
+      ? '🔐 esperando sua permissão'
+      : running
+        ? `${ACTIVITY[employee.activity].icon} ${ACTIVITY[employee.activity].label}…`
+        : queued?.status === 'scheduled'
+          ? `agendada para ${new Date(queued.run_at!).toLocaleString()}`
+          : queued?.status === 'pending_approval'
+          ? 'aguardando aprovação da delegação…'
+          : queued
+            ? 'na fila…'
+            : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -153,7 +212,7 @@ export function ChatView({ employee }: { employee: Employee }) {
             </div>
           )}
         </div>
-        {target?.kind === 'thread' && tasks[0] && (
+        {target?.kind === 'thread' && tasks.length > 0 && (
           <Button variant="ghost" title="Assistir o último turno no escritório" onClick={() => startReplay(tasks.at(-1)!.id)}>
             ▶️
           </Button>
@@ -185,41 +244,45 @@ export function ChatView({ employee }: { employee: Employee }) {
         )}
         <div className="grid gap-2.5">
           {rows.map((r) => (
-            <RowView key={r.key} row={r} pending={pending} />
+            <RowView key={r.key} row={r} />
           ))}
-          {(running || queued) && (
+          {status && (
             <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <span className="inline-flex gap-0.5">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:120ms]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:240ms]" />
-              </span>
-              {running ? `${ACTIVITY[employee.activity].icon} ${ACTIVITY[employee.activity].label}…` : queued?.status === 'pending_approval' ? 'aguardando aprovação…' : 'na fila…'}
+              {!waiting.length && (
+                <span className="inline-flex gap-0.5">
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:120ms]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:240ms]" />
+                </span>
+              )}
+              {status}
             </div>
           )}
         </div>
       </div>
 
       <Composer
-        busy={!!running}
+        busy={!!running && !question}
         disabled={!!queued && !running}
         onSend={send}
         onStop={running ? () => act(() => api('POST', `/api/tasks/${running.id}/stop`)) : undefined}
-        placeholder={running ? 'Mandar agora (ele lê no meio do trabalho)…' : `Mensagem para ${employee.name}…`}
+        placeholder={
+          question ? 'Responda à pergunta acima, ou escreva sua resposta aqui…' : running ? 'Mandar agora (ele lê no meio do trabalho)…' : `Mensagem para ${employee.name}…`
+        }
       />
     </div>
   );
 }
 
-function RowView({ row: r, pending }: { row: Row; pending: Set<number> }) {
-  const approval = useOffice((s) => (r.kind === 'approval' ? s.state.approvals.find((a) => a.id === r.approvalId) : undefined));
+function RowView({ row: r }: { row: Row }) {
+  const pending = useOffice((s) => ('approvalId' in r ? s.state.approvals.find((a) => a.id === r.approvalId) : undefined));
   switch (r.kind) {
     case 'user':
       return (
         <div className="ml-8 justify-self-end">
           <div className="mb-0.5 text-right text-[11px] text-zinc-500">
             {r.who} · {time(r.ts)}
-            {r.live && ' · durante o trabalho'}
+            {r.note && ` · ${r.note}`}
           </div>
           <div className="rounded-2xl rounded-tr-sm bg-blue-600 px-3 py-2 text-sm whitespace-pre-wrap text-white [overflow-wrap:anywhere]">{r.text}</div>
         </div>
@@ -230,34 +293,56 @@ function RowView({ row: r, pending }: { row: Row; pending: Set<number> }) {
           <Markdown text={r.text} />
         </div>
       );
+    case 'question':
+      return pending?.kind === 'question' ? (
+        <div className="mr-4">
+          <QuestionCard id={pending.id} who={null} payload={pending.payload} />
+        </div>
+      ) : (
+        <div className="mr-6 rounded-2xl rounded-tl-sm bg-zinc-100 px-3 py-2 text-sm whitespace-pre-wrap dark:bg-zinc-800/80">❓ {r.text}</div>
+      );
+    case 'approval':
+      return pending ? <ApprovalCard approval={pending} compact /> : null;
     case 'tools':
       return (
         <details className="text-xs text-zinc-500">
-          <summary className="cursor-pointer select-none">🛠️ {r.items.length} ação(ões): {[...new Set(r.items.map((i) => i.data.name.replace(/^mcp__office__/, '')))].join(', ')}</summary>
-          <ul className="mt-1 grid gap-0.5 border-l border-zinc-300 pl-2 dark:border-zinc-700">
+          <summary className="cursor-pointer select-none">{summarizeTools(r.items)}</summary>
+          <ul className="mt-1 grid gap-1 border-l border-zinc-300 pl-2 dark:border-zinc-700">
             {r.items.map((i) => (
-              <li key={i.id} className="font-mono [overflow-wrap:anywhere]">
-                {i.data.name.replace(/^mcp__office__/, 'office.')} <span className="text-zinc-400">{i.data.summary}</span>
+              <li key={i.id} className="[overflow-wrap:anywhere]">
+                {actionOf(i.data.name)[1]} {i.data.description && <span className="text-zinc-600 dark:text-zinc-300">{i.data.description} </span>}
+                <span className="font-mono text-zinc-400">{i.data.name.startsWith('mcp__office__') ? i.data.name.slice(12) : i.data.name === 'Bash' ? '' : `${i.data.name} `}{i.data.summary}</span>
               </li>
             ))}
           </ul>
         </details>
       );
+    case 'todos':
+      return (
+        <div className="mr-6 rounded-xl border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+          <div className="mb-1 text-xs font-medium text-zinc-500">📋 Plano</div>
+          <ul className="grid gap-0.5">
+            {r.todos.map((t, i) => (
+              <li key={i} className={cx(t.status === 'completed' && 'text-zinc-400 line-through', t.status === 'in_progress' && 'font-medium')}>
+                {t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '⏳' : '○'} {t.status === 'in_progress' ? (t.activeForm ?? t.content) : t.content}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
     case 'note':
       return r.detail ? (
-        <details className="text-xs text-zinc-500">
+        <details className={cx('text-xs', r.tone === 'warn' ? 'text-red-600' : 'text-zinc-500')}>
           <summary className="cursor-pointer select-none">
             {r.icon} {r.text}
           </summary>
           <p className="mt-1 border-l border-zinc-300 pl-2 whitespace-pre-wrap [overflow-wrap:anywhere] dark:border-zinc-700">{r.detail}</p>
         </details>
       ) : (
-        <div className="text-xs text-zinc-500">
+        <div className={cx('text-xs', r.tone === 'warn' ? 'text-red-600' : 'text-zinc-500')}>
           {r.icon} {r.text}
         </div>
       );
-    case 'approval':
-      return approval && pending.has(approval.id) ? <ApprovalCard approval={approval} /> : <div className="text-xs text-zinc-500 [overflow-wrap:anywhere]">🔐 Pediu {r.summary}</div>;
     case 'end':
       return (
         <div className="grid gap-1">
