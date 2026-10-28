@@ -14,7 +14,21 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
 
 export type Tab = 'office' | 'tasks' | 'costs' | 'config';
 export type PanelTab = 'chat' | 'sessions' | 'activity' | 'settings';
+export type Theme = 'light' | 'dark' | 'system';
 type Toast = { id: number; text: string; tone: 'error' | 'info' };
+
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(theme: Theme) {
+  document.documentElement.classList.toggle('dark', theme === 'dark' || (theme === 'system' && prefersDark.matches));
+}
+const storedTheme = ((): Theme => {
+  const t = localStorage.getItem('theme');
+  return t === 'light' || t === 'dark' || t === 'system' ? t : 'system';
+})();
+applyTheme(storedTheme);
+prefersDark.addEventListener('change', () => {
+  if (get().theme === 'system') applyTheme('system');
+});
 
 type Store = {
   state: OfficeState;
@@ -22,6 +36,7 @@ type Store = {
   connected: boolean;
   events: OfficeEvent[];
   tab: Tab;
+  theme: Theme;
   selectedEmployeeId: number | null;
   selectedTaskId: number | null;
   replay: { taskId: number; total: number; index: number } | null;
@@ -55,6 +70,7 @@ export const useOffice = create<Store>(() => ({
   connected: false,
   events: [],
   tab: 'office',
+  theme: storedTheme,
   selectedEmployeeId: null,
   selectedTaskId: null,
   replay: null,
@@ -70,6 +86,11 @@ export const setTab = (tab: Tab) => set({ tab });
 export const selectEmployee = (id: number | null) => set({ selectedEmployeeId: id, tab: 'office' });
 export const openTask = (id: number | null) => set({ selectedTaskId: id, tab: 'tasks' });
 export const setPanelTab = (panelTab: PanelTab) => set({ panelTab });
+export function setTheme(theme: Theme) {
+  localStorage.setItem('theme', theme);
+  applyTheme(theme);
+  set({ theme });
+}
 export const openChat = (employeeId: number, target: ChatTarget) =>
   set((s) => ({ chat: { ...s.chat, [employeeId]: target }, selectedEmployeeId: employeeId, panelTab: 'chat', tab: 'office' }));
 
