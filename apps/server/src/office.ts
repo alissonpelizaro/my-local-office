@@ -368,7 +368,7 @@ export async function approveTool(ctx: RunContext, name: string, input: any) {
   const file = input?.file_path ?? input?.notebook_path;
   const inRepo = typeof file === 'string' && isInside(ctx.cwd, file);
   if (name === 'Bash' && settings().autoAllowReadOnly && isReadOnlyCommand(input?.command, ctx.cwd)) return allow(input);
-  if (!external && allowedByRule(JSON.parse(e.allow_rules), name, input)) return allow(input);
+  if (!external && allowedByRule(JSON.parse(e.allow_rules), name, input, ctx.cwd)) return allow(input);
   if (!external && EDIT_TOOLS.has(name) && inRepo && e.auto_edit) return allow(input);
 
   const d = await waitApproval(ctx, 'tool', {
