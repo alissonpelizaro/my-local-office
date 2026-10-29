@@ -241,8 +241,8 @@ async function runOnboard(id: number) {
     kind: 'onboard',
     employee: e,
     prompt: ONBOARD_PROMPT,
-    systemPrompt: 'Você está fazendo o onboarding deste repositório no My Local Office. Somente leitura.',
-    tools: ['Read', 'Grep', 'Glob'],
+    systemPrompt: 'Você está fazendo o onboarding deste repositório no My Local Office. Somente leitura: no Bash só passam comandos de leitura (git log, git show…).',
+    tools: ['Read', 'Grep', 'Glob', 'Bash'],
     model: settings().onboardModel,
     effort: '',
     depth: MAX_CONSULT_DEPTH,
@@ -356,7 +356,10 @@ function toolDetail(name: string, input: any) {
 }
 
 export async function approveTool(ctx: RunContext, name: string, input: any) {
-  if (ctx.kind !== 'task') return deny('Esta execução é somente leitura.');
+  if (ctx.kind !== 'task') {
+    // Ninguém aprova fora de task: comando só leitura passa, independente do autoAllowReadOnly.
+    return name === 'Bash' && isReadOnlyCommand(input?.command, ctx.cwd) ? allow(input) : deny('Esta execução é somente leitura.');
+  }
   if (name === 'AskUserQuestion') return askUserQuestion(ctx, input);
   const e = employee(ctx.employee.id) ?? ctx.employee;
   const external = isExternal(name, input);
@@ -411,7 +414,7 @@ export async function askColleague(ctx: RunContext, to: string, question: string
     taskId: ctx.taskId,
     depth: ctx.depth + 1,
     chain: [...ctx.chain, ctx.employee.id],
-    tools: ['Read', 'Grep', 'Glob'],
+    tools: ['Read', 'Grep', 'Glob', 'Bash'],
     model: settings().consultModel || undefined,
     prompt: `Pergunta de ${ctx.employee.name}:\n\n${question}`,
     systemPrompt: [
@@ -419,7 +422,8 @@ export async function askColleague(ctx: RunContext, to: string, question: string
       target.profile && `Sua ficha:\n${target.profile}`,
       agentsMd(target.repo_path),
       `O colega "${ctx.employee.name}" está te consultando. Responda de forma objetiva e verificável, com base no código deste repositório (cite arquivos).`,
-      'Consulta somente leitura: não altere nada. Se a pergunta for sobre outro repositório, diga quem consultar (veja a tool directory).',
+      'Consulta somente leitura: não altere nada. No Bash só passam comandos de leitura (git log/diff/show, gh pr view…); o resto é negado.',
+      'Se a pergunta for sobre outro repositório, diga quem consultar (veja a tool directory).',
     ]
       .filter(Boolean)
       .join('\n'),
@@ -578,7 +582,7 @@ function persona(e: Employee, wt?: Worktree) {
     agentsMd(e.repo_path),
     'Você tem colegas responsáveis por outros repositórios, acessíveis pelo MCP "office":',
     '- directory: lista quem cuida de quê;',
-    '- ask_colleague: pergunta algo a um colega, que só lê o código dele (sem shell nem gh); use em vez de ler outros repositórios;',
+    '- ask_colleague: pergunta algo a um colega, que só lê o repositório dele (código, git e gh de leitura); use em vez de ler outros repositórios;',
     '- delegate_task: pede uma ação no repositório de outro colega (mudar código, revisar ou aprovar PR, rodar comando);',
     '- ask_boss: leva ao chefe (o usuário) uma decisão que não cabe a você.',
     'Para explorar o código use Read, Glob e Grep (não pedem permissão) em vez de ls/cat/find no shell.',
