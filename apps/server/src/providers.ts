@@ -38,6 +38,8 @@ export function childEnv(provider: Provider | undefined): NodeJS.ProcessEnv {
     ...(provider && remoteEnv(provider)),
     // Aprovação humana pode levar horas; o permission prompt é uma chamada MCP bloqueante.
     MCP_TOOL_TIMEOUT: String(24 * 3600_000),
+    // O runner fecha o stdin no primeiro `result`: subagente/Bash em background terminaria sem ninguém ler o retorno.
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
   };
 }
 
