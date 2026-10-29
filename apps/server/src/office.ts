@@ -424,9 +424,15 @@ export async function askColleague(ctx: RunContext, to: string, question: string
       .filter(Boolean)
       .join('\n'),
   });
-  const timer = setTimeout(() => r.stop(), CONSULT_TIMEOUT_MS);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    r.stop();
+  }, CONSULT_TIMEOUT_MS);
   const res = await r.done;
   clearTimeout(timer);
+  // Morto pelo timeout não tem `result`; o stderr só traz avisos do CLI e confundiria quem perguntou.
+  if (timedOut) Object.assign(res, { text: `Sem resposta em ${CONSULT_TIMEOUT_MS / 60_000} min (tempo esgotado).`, isError: true });
   if (ctx.taskId) run('UPDATE tasks SET cost_usd = cost_usd + ? WHERE id = ?', res.costUsd, ctx.taskId);
   publish('colleague.answer', { from: target.name, fromId: target.id, to: ctx.employee.name, answer: res.text, costUsd: res.costUsd, isError: res.isError }, ids);
   if (res.isError) throw new Error(`${target.name} não conseguiu responder: ${res.text}`);
