@@ -316,6 +316,7 @@ const STATUS_ICON: Record<TaskStatus, { icon?: IconName; className: string }> = 
   pending_approval: { icon: 'lock', className: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' },
   queued: { icon: 'clock', className: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400' },
   scheduled: { icon: 'calendar', className: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' },
+  paused: { icon: 'pause', className: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' },
   done: { icon: 'check', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' },
   failed: { icon: 'x', className: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' },
   cancelled: { icon: 'minus', className: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400' },

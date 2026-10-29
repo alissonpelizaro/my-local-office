@@ -31,7 +31,7 @@ export function threads(employeeId: number) {
         updatedAt: last.finished_at ?? last.created_at,
         worktree: last.worktree,
         resumedSession: root.resume_session_id,
-        repeatEvery: turns.find((t) => t.status === 'scheduled' && t.repeat_every)?.repeat_every ?? null,
+        repeatEvery: turns.find((t) => (t.status === 'scheduled' || t.status === 'paused') && t.repeat_every)?.repeat_every ?? null,
       };
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))

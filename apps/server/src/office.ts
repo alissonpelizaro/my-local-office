@@ -40,7 +40,7 @@ export function state() {
     providers: all<Provider>('SELECT * FROM providers ORDER BY name').map(publicProvider),
     // Das séries, só as execuções vivas e a última encerrada: o histórico completo fica na conversa da série.
     tasks: all<Task>(
-      `SELECT * FROM tasks t WHERE t.repeat_every IS NULL OR t.status IN ('scheduled', 'queued', 'running')
+      `SELECT * FROM tasks t WHERE t.repeat_every IS NULL OR t.status IN ('scheduled', 'paused', 'queued', 'running')
          OR t.id = (SELECT MAX(id) FROM tasks WHERE thread_id = t.thread_id AND repeat_every IS NOT NULL AND status IN ('done', 'failed', 'cancelled'))
        ORDER BY t.id DESC LIMIT 100`,
     ),
@@ -562,6 +562,16 @@ export function releaseScheduled() {
   if (due.length) pump();
 }
 
+// Pausa a série segurando a execução agendada; ao retomar, horários que passaram são pulados.
+export function pauseTask(id: number, paused: boolean) {
+  const t = get<Task>('SELECT * FROM tasks WHERE id = ?', id);
+  if (!t?.repeat_every || t.status !== (paused ? 'scheduled' : 'paused')) throw new HttpError(409, paused ? 'só série agendada pode ser pausada' : 'série não está pausada');
+  const status = paused ? 'paused' : 'scheduled';
+  const runAt = paused || Date.parse(t.run_at!) > Date.now() ? t.run_at : nextRunAt(t);
+  run('UPDATE tasks SET status = ?, run_at = ? WHERE id = ?', status, runAt, id);
+  publish('task.status', { status }, taskIds(t));
+}
+
 // O Claude Code carrega CLAUDE.md (global e do repo) sozinho, mas não AGENTS.md: vai no system prompt,
 // a não ser que o CLAUDE.md do repo já o importe com @AGENTS.md.
 function agentsMd(dir: string) {
@@ -747,7 +757,7 @@ export function stopTask(id: number) {
     return r.stop();
   }
   const t = get<Task>('SELECT * FROM tasks WHERE id = ?', id);
-  if (!t || !['scheduled', 'queued', 'pending_approval'].includes(t.status)) throw new HttpError(409, 'task não pode ser cancelada');
+  if (!t || !['scheduled', 'paused', 'queued', 'pending_approval'].includes(t.status)) throw new HttpError(409, 'task não pode ser cancelada');
   run(`UPDATE tasks SET status = 'cancelled', finished_at = ? WHERE id = ?`, now(), id);
   run(`UPDATE approvals SET status = 'expired', decided_at = ? WHERE kind = 'delegation' AND status = 'pending' AND json_extract(payload, '$.taskId') = ?`, now(), id);
   publish('task.finished', { status: 'cancelled' }, taskIds(t));

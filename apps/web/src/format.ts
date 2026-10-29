@@ -15,6 +15,7 @@ export const ACTIVITY: Record<Activity, { label: string; icon: string }> = {
 
 export const STATUS: Record<TaskStatus, { label: string; tone: 'default' | 'red' | 'green' | 'blue' | 'amber' | 'violet' }> = {
   scheduled: { label: 'agendada', tone: 'violet' },
+  paused: { label: 'pausada', tone: 'amber' },
   pending_approval: { label: 'aguardando aprovação', tone: 'amber' },
   queued: { label: 'na fila', tone: 'default' },
   running: { label: 'executando', tone: 'blue' },
@@ -82,7 +83,7 @@ export function describe(e: OfficeEvent): { icon: string; text: string } | null 
     case 'task.created':
       return { icon: '📥', text: `nova task #${d.id}: ${d.title}` };
     case 'task.status':
-      return { icon: '▶️', text: `task ${STATUS[d.status as TaskStatus]?.label ?? d.status}` };
+      return { icon: d.status === 'paused' ? '⏸️' : '▶️', text: `task ${STATUS[d.status as TaskStatus]?.label ?? d.status}` };
     case 'task.finished':
       return { icon: d.status === 'done' ? '✅' : d.status === 'cancelled' ? '⛔' : '💥', text: `task ${STATUS[d.status as TaskStatus]?.label ?? d.status}${d.costUsd ? ` · ${money(d.costUsd)}` : ''}` };
     case 'run.started':
