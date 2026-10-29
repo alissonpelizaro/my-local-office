@@ -421,8 +421,9 @@ export function armchair(g: G, gx: number, gy: number, c: number) {
   shadow(g, gx, gy, 0.8, 0.8);
   box(g, gx, gy, 0.8, 0.8, 9, c);
   box(g, gx, gy, 0.8, 0.2, 24, darken(c, 0.1));
-  box(g, gx, gy, 0.15, 0.8, 15, darken(c, 0.05));
-  box(g, gx + 0.65, gy, 0.15, 0.8, 15, darken(c, 0.05));
+  // Braços só na frente do encosto: desenhados depois, invadindo o volume dele pintariam por cima.
+  box(g, gx, gy + 0.2, 0.15, 0.6, 15, darken(c, 0.05));
+  box(g, gx + 0.65, gy + 0.2, 0.15, 0.6, 15, darken(c, 0.05));
 }
 
 export function sideTable(g: G, gx: number, gy: number) {
