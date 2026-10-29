@@ -283,19 +283,17 @@ export function bookshelf(g: G, gx: number, gy: number, w: number, d: number, fa
   }
 }
 
+// Balcão com pia e cafeteira em cima, no mesmo desenho para a cafeteira nunca ficar atrás do tampo.
 export function counter(g: G, gx: number, gy: number, w: number, d: number) {
   shadow(g, gx, gy, w, d);
   box(g, gx, gy, w, d, 15, 0xa16207);
   quad(g, rect(gx, gy, w, d, 16), 0xd6d3d1);
   box(g, gx + w - 0.9, gy + 0.15, 0.55, 0.4, 1, 0x9ca3af, 15.5);
-}
-
-export function coffeeMachine(g: G, gx: number, gy: number) {
-  box(g, gx, gy, 0.5, 0.42, 20, 0x1f2937, 16);
-  const led = pt(gx + 0.25, gy + 0.42, 32);
+  box(g, gx + 0.25, gy + 0.05, 0.5, 0.42, 20, 0x1f2937, 16);
+  const led = pt(gx + 0.5, gy + 0.47, 32);
   g.fillStyle(0xef4444, 1);
   g.fillCircle(led.x, led.y, 1.4);
-  cylinder(g, gx + 0.25, gy + 0.55, 0.06, 5, 0xffffff, 16);
+  cylinder(g, gx + 0.5, gy + 0.6, 0.06, 5, 0xffffff, 16);
 }
 
 export function fridge(g: G, gx: number, gy: number) {
