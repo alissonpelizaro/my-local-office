@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { act, api, type ConfigSection, setTheme, toast, useOffice } from '../store';
 import type { DiscoveredRepo, Employee, Provider, Settings } from '../types';
-import { EmployeeSettings, ModelSelect, ModelsStatus } from './EmployeeSettings';
+import { EffortSelect, EmployeeSettings, ModelSelect, ModelsStatus } from './EmployeeSettings';
 import { Icon } from './icons';
 import { Avatar, Button, Card, Chip, ConfirmButton, cx, Empty, Field, Input, Saved, Segmented, Select, SettingRow, Stepper, Switch } from './ui';
 
@@ -147,6 +147,7 @@ function EmployeeRow({ e, color }: { e: Employee; color: string }) {
         </div>
         <div className="hidden flex-wrap justify-end gap-1 sm:flex">
           <Chip>{provider ? provider.name : (e.model ?? settings.defaultModel)}</Chip>
+          {e.effort && <Chip>esforço {e.effort}</Chip>}
           {!!e.auto_edit && <Chip tone="blue">auto-edit</Chip>}
           {e.isolation === 'worktree' && <Chip tone="green" icon="branch">worktree</Chip>}
           {e.max_parallel > 1 && <Chip>{e.max_parallel}× paralelo</Chip>}
@@ -297,13 +298,25 @@ function ImportSection({ onDone }: { onDone: () => void }) {
 
 // ---------- provedores ----------
 
-const BLANK = { name: '', format: 'openai' as Provider['format'], baseUrl: '', apiKey: '', model: '', smallModel: '' };
+const BLANK = { name: '', format: 'openai' as Provider['format'], baseUrl: '', apiKey: '', model: '', smallModel: '', contextWindow: '' };
+// O Ollama fala a API da Anthropic direto. A janela precisa bater com o contexto carregado nele (OLLAMA_CONTEXT_LENGTH).
+const OLLAMA: typeof BLANK = { ...BLANK, name: 'Ollama', format: 'anthropic', baseUrl: 'http://127.0.0.1:11434', contextWindow: '65536' };
+const isLocal = (url: string) => /\/\/(127\.0\.0\.1|localhost)\b/.test(url);
 
 function ProvidersSection() {
   const providers = useOffice((s) => s.state.providers);
   const [form, setForm] = useState<typeof BLANK | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
+  const [found, setFound] = useState<string[]>([]); // modelos que o provedor anuncia, só como sugestão
   const bind = (k: keyof typeof BLANK) => ({ value: form?.[k] ?? '', onChange: (e: { target: { value: string } }) => setForm((f) => ({ ...(f ?? BLANK), [k]: e.target.value })) });
+  const loadModels = (f: typeof BLANK, id = editing) =>
+    f.baseUrl.trim() && api<string[]>('POST', '/api/providers/models', { ...f, id }).then(setFound, () => setFound([]));
+  const open = (f: typeof BLANK, id: number | null = null) => {
+    setForm(f);
+    setEditing(id);
+    setFound([]);
+    loadModels(f, id);
+  };
   const close = () => {
     setForm(null);
     setEditing(null);
@@ -316,9 +329,14 @@ function ProvidersSection() {
         description="Sem provedor, todos usam a assinatura Claude (nativo). Cadastre um para alternar por funcionário."
         actions={
           !form && (
-            <Button size="sm" icon="plus" onClick={() => setForm(BLANK)}>
-              Novo provedor
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" icon="server" onClick={() => open(OLLAMA)}>
+                Ollama local
+              </Button>
+              <Button size="sm" icon="plus" onClick={() => open(BLANK)}>
+                Novo provedor
+              </Button>
+            </div>
           )
         }
       >
@@ -332,20 +350,23 @@ function ProvidersSection() {
                 <div className="flex items-center gap-2">
                   <b>{p.name}</b>
                   <Chip>{p.format === 'openai' ? 'OpenAI' : 'Anthropic'}</Chip>
-                  {!p.has_key && <Chip tone="amber">sem chave</Chip>}
+                  {!p.has_key && !isLocal(p.base_url) && <Chip tone="amber">sem chave</Chip>}
                 </div>
                 <div className="truncate text-xs text-zinc-500">
                   {p.base_url} · {p.model}
                   {p.small_model ? ` / ${p.small_model}` : ''}
+                  {p.context_window ? ` · ${Math.round(p.context_window / 1000)}K` : ''}
                 </div>
               </div>
               <Button
                 size="sm"
                 icon="pencil"
-                onClick={() => {
-                  setEditing(p.id);
-                  setForm({ name: p.name, format: p.format, baseUrl: p.base_url, apiKey: '', model: p.model, smallModel: p.small_model ?? '' });
-                }}
+                onClick={() =>
+                  open(
+                    { name: p.name, format: p.format, baseUrl: p.base_url, apiKey: '', model: p.model, smallModel: p.small_model ?? '', contextWindow: p.context_window ? String(p.context_window) : '' },
+                    p.id,
+                  )
+                }
               >
                 Editar
               </Button>
@@ -387,17 +408,25 @@ function ProvidersSection() {
               />
             </Field>
             <Field label="Base URL" hint={form.format === 'openai' ? 'Com /v1 — ex. https://proxy.lynn.totvs.ai/v1' : 'Sem /v1 — ex. https://proxy.lynn.totvs.ai'}>
-              <Input required {...bind('baseUrl')} />
+              <Input required {...bind('baseUrl')} onBlur={() => loadModels(form)} />
             </Field>
-            <Field label="API key" hint={editing ? 'Vazio mantém a chave salva.' : 'Fica em data/ e nunca volta para a UI.'}>
-              <Input type="password" autoComplete="off" {...bind('apiKey')} />
+            <Field label="API key" hint={editing ? 'Vazio mantém a chave salva.' : isLocal(form.baseUrl) ? 'Local não precisa.' : 'Fica em data/ e nunca volta para a UI.'}>
+              <Input type="password" autoComplete="off" {...bind('apiKey')} onBlur={() => loadModels(form)} />
             </Field>
-            <Field label="Modelo" hint="Precisa suportar tools.">
-              <Input placeholder="gpt-4o" required {...bind('model')} />
+            <Field label="Modelo" hint={found.length ? `Precisa suportar tools. ${found.length} no provedor: escolha na lista.` : 'Precisa suportar tools.'}>
+              <Input placeholder="gpt-4o" required list="provider-models" {...bind('model')} />
             </Field>
             <Field label="Modelo leve (opcional)" hint="Usado no lugar do haiku.">
-              <Input placeholder="gpt-4o-mini" {...bind('smallModel')} />
+              <Input placeholder="gpt-4o-mini" list="provider-models" {...bind('smallModel')} />
             </Field>
+            <Field label="Janela de contexto (opcional)" hint="Tokens que o modelo aguenta; a conversa é compactada antes. No Ollama, o mesmo valor de OLLAMA_CONTEXT_LENGTH.">
+              <Input inputMode="numeric" placeholder="65536" {...bind('contextWindow')} />
+            </Field>
+            <datalist id="provider-models">
+              {found.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
             <div className="flex justify-end gap-2 sm:col-span-2">
               <Button type="button" variant="ghost" onClick={close}>
                 Cancelar
@@ -455,6 +484,22 @@ function SettingsSection() {
             <div className="w-56">
               <ModelSelect allowDefault={false} value={settings.onboardModel} onChange={(onboardModel) => save({ onboardModel })} />
             </div>
+          </SettingRow>
+          <SettingRow title="Modelo das consultas" description="Quando um colega pergunta algo a outro. Só leitura: não precisa do modelo mais caro.">
+            <div className="w-56">
+              <ModelSelect allowDefault={false} emptyLabel="Modelo do colega" value={settings.consultModel} onChange={(consultModel) => save({ consultModel })} />
+            </div>
+          </SettingRow>
+          <SettingRow title="Esforço padrão" description="Quanto o modelo pensa antes de agir. Cada funcionário pode ter o seu.">
+            <div className="w-56">
+              <EffortSelect allowDefault={false} value={settings.defaultEffort} onChange={(defaultEffort) => save({ defaultEffort })} />
+            </div>
+          </SettingRow>
+          <SettingRow
+            title="Compactar conversa acima de (mil tokens)"
+            description="Cada chamada relê a conversa inteira; passando disso o Claude Code resume o histórico. 0 deixa o Claude Code decidir (em modelos de 1M a conversa cresce muito)."
+          >
+            <Stepper value={settings.compactWindow / 1000} min={0} max={1000} step={25} onChange={(k) => save({ compactWindow: k * 1000 })} />
           </SettingRow>
           <SettingRow title="Atualizar fichas a cada N commits" description="Fichas automáticas são refeitas quando o repo anda isso. 0 desliga.">
             <Stepper value={settings.profileRefreshCommits} min={0} max={1000} step={10} onChange={(profileRefreshCommits) => save({ profileRefreshCommits })} />

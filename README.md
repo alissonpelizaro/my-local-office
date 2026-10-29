@@ -44,8 +44,14 @@ pnpm typecheck
   - `approve`: permission prompt tool
 - **Permissões**: o que o settings não libera vira um "!" sobre o funcionário e um pedido na UI. Ações externas (`git push`, `gh pr review/merge`, docker…) sempre perguntam.
 - **Provedores**: cada funcionário usa a assinatura nativa ou um provedor remoto.
-  - Anthropic-compatível: direto.
+  - Anthropic-compatível: direto. Prefira este formato quando o provedor oferecer (LiteLLM, Ollama), porque a ponte OpenAI perde o prompt caching.
   - OpenAI-compatível: via ponte em `/bridge/:id`.
+  - Ollama local: botão **Ollama local** em Provedores. O Claude Code precisa de uns 64K de contexto, então suba o Ollama com `OLLAMA_CONTEXT_LENGTH=65536` e use o mesmo valor em "Janela de contexto". Execuções locais custam $0 na aba Custos.
+  - O cadastro sugere os modelos que o provedor anuncia em `/models`.
+- **Consumo de tokens**:
+  - Conversas são compactadas pelo Claude Code ao passar de **Compactar conversa acima de** (200K por padrão, via `CLAUDE_CODE_AUTO_COMPACT_WINDOW`). Com provedor, vale a menor entre essa e a janela do provedor. A compactação aparece no chat.
+  - Consultas entre colegas usam o **Modelo das consultas** (sonnet), não o do colega.
+  - **Esforço** (`--effort` low…max): padrão do escritório e por funcionário. Vazio deixa o Claude Code decidir. Onboarding não usa.
 - **Conversas**: clicar num funcionário abre um chat.
   - Cada mensagem é um turno que retoma a mesma sessão do Claude (`--resume`), na mesma pasta onde a conversa começou. Se o worktree tiver sido descartado, é recriado no mesmo caminho.
   - Durante um turno, a mensagem entra na hora (stdin).

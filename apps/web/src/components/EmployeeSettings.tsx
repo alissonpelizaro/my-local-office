@@ -13,7 +13,7 @@ export function modelName(id: string) {
 }
 
 // Aliases acompanham a versão mais nova que o seu Claude Code conhece; a versão fixa não muda sozinha.
-export function ModelSelect({ value, onChange, allowDefault = true }: { value: string; onChange: (v: string) => void; allowDefault?: boolean }) {
+export function ModelSelect({ value, onChange, allowDefault = true, emptyLabel }: { value: string; onChange: (v: string) => void; allowDefault?: boolean; emptyLabel?: string }) {
   const models = useOffice((s) => s.models);
   const fallback = useOffice((s) => s.state.settings.defaultModel);
   const aliases = models?.aliases ?? ['opus', 'sonnet', 'haiku'].map((alias) => ({ alias, model: null }));
@@ -21,7 +21,7 @@ export function ModelSelect({ value, onChange, allowDefault = true }: { value: s
   const known = new Set(['', ...aliases.map((a) => a.alias), ...fixed.map((m) => m.id)]);
   return (
     <Select value={value} onChange={(e) => onChange(e.target.value)}>
-      {allowDefault && <option value="">Padrão do escritório ({fallback})</option>}
+      {(allowDefault || emptyLabel) && <option value="">{emptyLabel ?? `Padrão do escritório (${fallback})`}</option>}
       <optgroup label="Sempre o mais recente">
         {aliases.map((a) => (
           <option key={a.alias} value={a.alias}>
@@ -41,6 +41,23 @@ export function ModelSelect({ value, onChange, allowDefault = true }: { value: s
         </optgroup>
       )}
       {!known.has(value) && <option value={value}>{value} · personalizado</option>}
+    </Select>
+  );
+}
+
+const EFFORTS: Record<string, string> = { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra alto', max: 'Máximo' };
+
+// Esforço de raciocínio (--effort). Vazio herda o padrão do escritório ou, no próprio escritório, o do Claude Code.
+export function EffortSelect({ value, onChange, allowDefault = true }: { value: string; onChange: (v: string) => void; allowDefault?: boolean }) {
+  const fallback = useOffice((s) => s.state.settings.defaultEffort);
+  return (
+    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{allowDefault ? `Padrão do escritório (${EFFORTS[fallback] ?? 'Claude Code'})` : 'Padrão do Claude Code'}</option>
+      {Object.entries(EFFORTS).map(([v, label]) => (
+        <option key={v} value={v}>
+          {label}
+        </option>
+      ))}
     </Select>
   );
 }
@@ -128,6 +145,9 @@ export function EmployeeSettings({ e }: { e: Employee }) {
           </Field>
           <Field label="Modelo" hint={e.provider_id ? 'Com provedor remoto vale o modelo do provedor.' : undefined}>
             <ModelSelect value={e.model ?? ''} onChange={(model) => patch({ model })} />
+          </Field>
+          <Field label="Esforço" hint="Mais esforço pensa mais e gasta mais tokens.">
+            <EffortSelect value={e.effort ?? ''} onChange={(effort) => patch({ effort })} />
           </Field>
         </div>
       </Section>

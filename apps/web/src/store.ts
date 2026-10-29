@@ -63,6 +63,9 @@ const EMPTY: OfficeState = {
     delegationNeedsApproval: true,
     defaultModel: 'sonnet',
     onboardModel: 'haiku',
+    consultModel: 'sonnet',
+    defaultEffort: '',
+    compactWindow: 200_000,
     importRoot: '~/webprojects',
     notifyApprovals: true,
     notifyTaskFinished: true,
@@ -168,7 +171,7 @@ const emit = (e: OfficeEvent, replay: boolean) => listeners.forEach((fn) => fn(e
 const marker = (type: string, taskId: number): OfficeEvent => ({ id: 0, ts: new Date().toISOString(), type, employeeId: null, taskId, data: null });
 
 // Eventos que não mudam nada fora do log não precisam recarregar o estado.
-const QUIET = new Set(['agent.text', 'agent.tool', 'run.started', 'agent.activity']);
+const QUIET = new Set(['agent.text', 'agent.tool', 'agent.compact', 'run.started', 'agent.activity']);
 
 // O server testa os modelos ao subir (leva alguns segundos): enquanto não terminou, pergunta de novo.
 let modelsTimer: ReturnType<typeof setTimeout> | undefined;

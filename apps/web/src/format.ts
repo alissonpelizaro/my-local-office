@@ -95,6 +95,8 @@ export function describe(e: OfficeEvent): { icon: string; text: string } | null 
       return { icon: '🛠️', text: `${d.name.replace(/^mcp__office__/, 'office.')} ${d.summary}` };
     case 'agent.error':
       return { icon: '💥', text: d.message };
+    case 'agent.compact':
+      return { icon: '🗜️', text: `conversa compactada${d.preTokens ? ` (${Math.round(d.preTokens / 1000)}K tokens)` : ''}` };
     case 'colleague.ask':
       return { icon: '❓', text: `pergunta a ${d.to}: ${d.question}` };
     case 'colleague.answer':

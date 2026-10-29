@@ -26,6 +26,7 @@ export const stopAll = () => runs.forEach((r) => r.stop());
 const busy = (employeeId: number) => [...runs.values()].some((r) => r.ctx.employee.id === employeeId);
 
 const OFFICE_TOOLS = ['directory', 'ask_colleague', 'delegate_task', 'ask_boss'].map((t) => `mcp__office__${t}`);
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const TOOL_ACTIVITY: Record<string, Activity> = {
   Read: 'reading',
@@ -67,6 +68,7 @@ export type StartRun = {
   chain?: number[];
   tools?: string[];
   model?: string;
+  effort?: string; // '' força o padrão do Claude Code
   resume?: string;
   fork?: boolean; // retoma numa cópia da sessão, sem alterar a original
   cwd?: string;
@@ -80,7 +82,11 @@ export function startRun(o: StartRun): Run {
   const ctx: RunContext = { token, kind: o.kind, employee: o.employee, cwd, taskId: o.taskId ?? null, depth: o.depth ?? 0, chain: o.chain ?? [] };
   const ids = { employeeId: o.employee.id, taskId: ctx.taskId };
   const provider = o.employee.provider_id == null ? undefined : get<Provider>('SELECT * FROM providers WHERE id = ?', o.employee.provider_id);
-  const model = provider ? undefined : (o.model ?? o.employee.model ?? settings().defaultModel);
+  const s = settings();
+  const model = provider ? undefined : (o.model ?? o.employee.model ?? s.defaultModel);
+  const effort = o.effort ?? o.employee.effort ?? s.defaultEffort;
+  // O Claude Code compacta ao chegar perto da janela; sem isso, modelos de 1M deixam a sessão crescer (e cada chamada relê tudo).
+  const windows = [s.compactWindow, provider?.context_window ?? 0].filter((n) => n > 0);
   const mcp = { mcpServers: { office: { type: 'http', url: `http://127.0.0.1:${PORT}/mcp`, headers: { Authorization: `Bearer ${token}` } } } };
   const args = [
     '-p',
@@ -92,11 +98,13 @@ export function startRun(o: StartRun): Run {
     '--allowedTools', OFFICE_TOOLS.join(','),
     '--append-system-prompt', o.systemPrompt,
     ...(model ? ['--model', model] : []),
+    ...(EFFORTS.includes(effort) ? ['--effort', effort] : []),
     ...(o.tools ? ['--tools', o.tools.join(',')] : []),
     ...(o.resume ? ['--resume', o.resume, ...(o.fork ? ['--fork-session'] : [])] : []),
   ];
 
-  const child = spawn(CLAUDE_BIN, args, { cwd, env: childEnv(provider), stdio: ['pipe', 'pipe', 'pipe'] });
+  const env = { ...childEnv(provider), ...(windows.length && { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(Math.min(...windows)) }) };
+  const child = spawn(CLAUDE_BIN, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => {}); // EPIPE quando o processo morre antes de ler
   let sent = 1;
   let results = 0;
@@ -120,6 +128,8 @@ export function startRun(o: StartRun): Run {
       sessionId = m.session_id;
       runModel = m.model ?? null;
       publish('run.started', { kind: o.kind, sessionId, model: m.model, provider: provider?.name ?? 'nativo' }, ids);
+    } else if (m.type === 'system' && m.subtype === 'compact_boundary') {
+      publish('agent.compact', { kind: o.kind, trigger: m.compact_metadata?.trigger, preTokens: m.compact_metadata?.pre_tokens }, ids);
     } else if (m.type === 'assistant') {
       for (const b of m.message?.content ?? []) {
         if (b.type === 'text' && b.text.trim()) {
@@ -133,7 +143,8 @@ export function startRun(o: StartRun): Run {
       result = {
         text: m.result ?? '',
         sessionId: m.session_id ?? sessionId,
-        costUsd: m.total_cost_usd ?? 0,
+        // Modelo local (Ollama) não custa nada; o CLI estimaria com o preço de um modelo Claude.
+        costUsd: provider && /\/\/(127\.0\.0\.1|localhost)\b/.test(provider.base_url) ? 0 : (m.total_cost_usd ?? 0),
         isError: Boolean(m.is_error) || m.subtype !== 'success',
       };
       // Com stdin aberto o CLI espera a próxima mensagem; fecha quando todas as enviadas tiveram resposta.
