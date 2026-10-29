@@ -3,7 +3,7 @@ import Phaser from 'phaser';
 import { ACTIVITY, truncate } from '../format';
 import type { Activity, OfficeEvent, OfficeState } from '../types';
 import * as D from './draw';
-import { computeFloorplan, type Floorplan, iso, type LeisureSpot, type Pt, type Room, route } from './layout';
+import { computeFloorplan, type Floorplan, iso, type LeisureSpot, type Pt, type Room, place, route, type Seg, WALL, WALL_CUT } from './layout';
 import type { Item } from './rooms';
 
 const { pt, mix, darken } = D;
@@ -243,17 +243,21 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private drawHall() {
-    const { hall, rooms } = this.plan!;
+    const { halls, spine, hallSegs, rooms } = this.plan!;
     this.graphics(FLOOR_DEPTH, (g) => {
-      for (let x = 0; x < hall.w; x++) for (let y = 0; y < hall.d; y++) D.quad(g, [pt(x, hall.gy + y), pt(x + 1, hall.gy + y), pt(x + 1, hall.gy + y + 1), pt(x, hall.gy + y + 1)], (x + y) % 2 ? THEME.hall : THEME.hallAlt);
+      for (const h of spine ? [...halls, spine] : halls) {
+        for (let x = h.gx; x < h.gx + h.w; x++) for (let y = h.gy; y < h.gy + h.d; y++) D.quad(g, [pt(x, y), pt(x + 1, y), pt(x + 1, y + 1), pt(x, y + 1)], (x + y) % 2 ? THEME.hall : THEME.hallAlt);
+      }
     });
-    // Vasos só na borda de cima do corredor (frente aberta das salas de trás), longe das portas.
-    // Na borda de baixo ficariam colados na parede baixa das salas da frente.
-    const doors = rooms.filter((r) => r.row === 0).map((r) => r.doorGx + 0.5);
-    const gy = hall.gy + 0.3;
-    for (let px = 2.5; px < hall.w - 0.5; px += 5) {
-      if (doors.some((d) => Math.abs(d - px) < 1.4)) continue;
-      this.furniture(px, gy, (g) => D.plant(g, px, gy, 0.9, hash(`hall${px}`)));
+    for (const s of hallSegs) this.wall(s);
+    // Vasos só na borda de cima de cada corredor, longe das portas das salas de cima.
+    for (const h of halls) {
+      const doors = rooms.filter((r) => r.row === 0 && r.hall.gy > h.gy && r.hall.gy < h.gy + h.d).map((r) => r.doorGx + 0.5);
+      const gy = h.gy + 0.3;
+      for (let px = 2.5; px < h.w - 0.5; px += 5) {
+        if (doors.some((d) => Math.abs(d - px) < 1.4)) continue;
+        this.furniture(px, gy, (g) => D.plant(g, px, gy, 0.9, hash(`hall${h.gy}:${px}`)));
+      }
     }
   }
 
@@ -272,15 +276,15 @@ export class OfficeScene extends Phaser.Scene {
       g.strokePoints([pt(r.gx, r.gy), pt(r.gx + r.w, r.gy), pt(r.gx + r.w, r.gy + r.d), pt(r.gx, r.gy + r.d)], true);
     });
 
-    if (r.walls) this.drawWalls(r);
+    if (r.walls) for (const s of r.segs) this.wall(s);
     else this.drawHedges(r);
 
-    const h = !r.walls ? 14 : r.row === 0 ? 54 : 18;
-    const sign = pt(r.gx + r.w / 2, r.gy, h + 10);
+    // Placa sobre a porta, do lado do corredor: não cobre os nomes de quem está na sala de trás.
+    const sign = pt(r.door.gx, r.row === 0 ? r.gy + r.d : r.gy, r.walls ? WALL_CUT : 10);
     this.keep(
       this.add
         .text(sign.x, sign.y, r.name, { fontFamily: FONT, fontSize: '12px', fontStyle: 'bold', color: '#ffffff', backgroundColor: r.color, padding: { x: 6, y: 2 }, resolution: 2 })
-        .setOrigin(0.5, 1)
+        .setOrigin(0.5, 0.5)
         .setDepth(LABEL_DEPTH),
     );
     if (r.walls) this.graphics(FLOOR_DEPTH + 2, (g) => D.doormat(g, r.door.gx, r.row === 0 ? r.gy + r.d - 0.25 : r.gy + 0.25));
@@ -290,23 +294,14 @@ export class OfficeScene extends Phaser.Scene {
     for (const item of r.blueprint?.items ?? []) this.drawItem(r, item);
   }
 
-  // Paredes do fundo em segmentos por tile, para ordenar com quem passa atrás. Fileira da frente tem parede baixa (corte).
-  private drawWalls(r: Room) {
-    const h = r.row === 0 ? 54 : 18;
-    const wallR = mix(THEME.wall, 0xffffff, 0.12);
-    for (let y = 0; y < r.d; y++) this.wall({ gx: r.gx, gy: r.gy + y }, { gx: r.gx, gy: r.gy + y + 1 }, h, THEME.wall);
-    for (let x = 0; x < r.w; x++) {
-      if (r.row === 1 && r.gx + x === r.doorGx) continue;
-      this.wall({ gx: r.gx + x, gy: r.gy }, { gx: r.gx + x + 1, gy: r.gy }, h, wallR);
-    }
-  }
-
-  // Profundidade pelo ponto mais ao fundo do trecho: tudo dentro da sala (mesmo encostado) fica na frente,
-  // e o que está atrás (sala vizinha) continua escondido pelo trecho que cobre.
-  private wall(a: Pt, b: Pt, h: number, color: number) {
-    const A = pt(a.gx, a.gy);
-    const B = pt(b.gx, b.gy);
-    this.graphics(Math.min(A.y, B.y) + 0.5, (g) => {
+  // Paredes em trechos de 1 tile, para ordenar com quem passa. Fundo: profundidade pelo ponto mais ao fundo,
+  // tudo dentro da sala (mesmo encostado) fica na frente. Frente: pelo meio do trecho, o que está a mais de
+  // 1/4 de tile de cada lado ordena certo (dentro atrás, corredor na frente).
+  private wall({ wall, at, u, h, front }: Seg) {
+    const A = wall === 'L' ? pt(at, u) : pt(u, at);
+    const B = wall === 'L' ? pt(at, u + 1) : pt(u + 1, at);
+    const color = wall === 'L' ? THEME.wall : mix(THEME.wall, 0xffffff, 0.12);
+    this.graphics(front ? (A.y + B.y) / 2 : A.y + 0.5, (g) => {
       D.quad(g, [A, B, { x: B.x, y: B.y - h }, { x: A.x, y: A.y - h }], color);
       g.fillStyle(darken(color, 0.15), 1);
       g.fillPoints([A, B, { x: B.x, y: B.y - 4 }, { x: A.x, y: A.y - 4 }], true); // rodapé
@@ -315,13 +310,11 @@ export class OfficeScene extends Phaser.Scene {
     });
   }
 
-  // Item de parede ocupando o tile `tile` (só nas paredes altas da fileira de trás). Redesenhável (janela, relógio).
+  // Item de parede ocupando o tile `tile` (só em trecho de fundo inteiro). Redesenhável (janela, relógio).
   private wallItem(r: Room, wall: D.Wall, tile: number, draw: (g: Phaser.GameObjects.Graphics, at: number, u: number) => void, refreshMs?: number) {
-    if (r.row !== 0 || !r.walls) return;
-    const len = wall === 'L' ? r.d : r.w;
-    if (tile < 0 || tile >= len) return;
-    const at = wall === 'L' ? r.gx : r.gy;
     const u = (wall === 'L' ? r.gy : r.gx) + tile;
+    if (!r.walls || !r.segs.some((s) => s.wall === wall && !s.front && s.u === u && s.h === WALL)) return;
+    const at = wall === 'L' ? r.gx : r.gy;
     const depth = (wall === 'L' ? iso(r.gx, u).y : iso(u, r.gy).y) + 1;
     const g = this.graphics(depth, (g) => draw(g, at, u));
     if (refreshMs) {
@@ -356,15 +349,17 @@ export class OfficeScene extends Phaser.Scene {
     this.wallItem(r, 'R', r.w - 2, (g, at, u) => D.picture(g, 'R', at, u, seed));
   }
 
+  // Planta de 5 tiles; sala esticada centraliza mesa, tapete e armário (alinhados com a porta).
   private drawBoss(r: Room) {
-    const desk = { gx: r.gx + 1.2, gy: r.gy + 1.2 };
-    this.graphics(FLOOR_DEPTH + 2, (g) => D.rug(g, r.gx + 0.7, r.gy + 0.8, 3.6, 2.8, 0x7f1d1d));
-    this.furniture(r.gx + 2.5, r.gy + 0.65, (g) => D.box(g, r.gx + 2.1, r.gy + 0.4, 0.8, 0.5, 30, 0x1f2937), -2);
+    const o = r.gx + Math.floor((r.w - 5) / 2);
+    const desk = { gx: o + 1.2, gy: r.gy + 1.2 };
+    this.graphics(FLOOR_DEPTH + 2, (g) => D.rug(g, o + 0.7, r.gy + 0.8, 3.6, 2.8, 0x7f1d1d));
+    this.furniture(o + 2.5, r.gy + 0.65, (g) => D.box(g, o + 2.1, r.gy + 0.4, 0.8, 0.5, 30, 0x1f2937), -2);
     this.furniture(desk.gx + 1.3, desk.gy + 0.5, (g) => {
       D.shadow(g, desk.gx, desk.gy, 2.6, 1);
       D.box(g, desk.gx, desk.gy, 2.6, 1, 16, mix(THEME.desk, 0x000000, 0.25));
     });
-    this.furniture(r.gx + 4.4, r.gy + 0.45, (g) => D.plant(g, r.gx + 4.4, r.gy + 0.45, 1.3, 7));
+    this.furniture(r.gx + r.w - 0.6, r.gy + 0.45, (g) => D.plant(g, r.gx + r.w - 0.6, r.gy + 0.45, 1.3, 7));
     this.furniture(r.gx + 0.35, r.gy + 1.8, (g) => D.bookshelf(g, r.gx + 0.12, r.gy + 1.0, 0.45, 1.6, 'gx', 11));
     this.wallItem(r, 'R', 1, (g, at, u) => D.windowPane(g, 'R', at, u), 600_000);
     this.wallItem(r, 'R', 3, (g, at, u) => D.clock(g, 'R', at, u), 30_000);
@@ -383,8 +378,7 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private drawItem(r: Room, it: Item) {
-    const x = r.gx + it.x;
-    const y = r.gy + it.y;
+    const { gx: x, gy: y } = place(r, it);
     const w = it.w ?? 1;
     const d = it.d ?? 1;
     const seed = hash(`${r.id}${it.t}${it.x}${it.y}`);
@@ -395,10 +389,8 @@ export class OfficeScene extends Phaser.Scene {
       case 'path':
         return this.graphics(FLOOR_DEPTH + 2, (g) => D.stonePath(g, x, r.gy, r.gy + r.d, seed));
       case 'counter':
+        this.steamAt = pt(x + 0.5, y + 0.25, 40);
         return at(x + w / 2, y + d / 2, (g) => D.counter(g, x, y, w, d));
-      case 'coffee':
-        this.steamAt = pt(x + 0.25, y + 0.2, 40);
-        return at(x + 0.25, y + 0.21, (g) => D.coffeeMachine(g, x, y), 12);
       case 'fridge':
         return at(x + 0.45, y + 0.35, (g) => D.fridge(g, x, y));
       case 'cooler':

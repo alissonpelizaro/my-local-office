@@ -67,7 +67,8 @@ export function EmployeePanel({ employeeId }: { employeeId: number }) {
 }
 
 function HistoryView({ employeeId }: { employeeId: number }) {
-  const tasks = useOffice((s) => s.state.tasks.filter((t) => t.employee_id === employeeId));
+  // Filtra fora do seletor: array novo a cada leitura faz o zustand re-renderizar em loop (tela branca).
+  const tasks = useOffice((s) => s.state.tasks).filter((t) => t.employee_id === employeeId);
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
       <SessionsView employeeId={employeeId} />
