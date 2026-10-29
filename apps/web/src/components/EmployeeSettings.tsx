@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { act, api, loadModels, selectEmployee, useOffice } from '../store';
 import type { Employee } from '../types';
-import { Button, Chip, Field, Input, Select, Textarea } from './ui';
+import { Icon } from './icons';
+import { Button, Chip, ConfirmButton, Field, Input, Saved, Segmented, Select, SettingRow, Stepper, Switch, Textarea } from './ui';
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
@@ -78,93 +79,137 @@ export function ModelsStatus() {
   );
 }
 
+const Section = ({ title, children, aside }: { title: string; children: React.ReactNode; aside?: React.ReactNode }) => (
+  <section className="grid gap-3">
+    <h4 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+      {title}
+      {aside}
+    </h4>
+    {children}
+  </section>
+);
+
 export function EmployeeSettings({ e }: { e: Employee }) {
   const { departments, providers } = useOffice((s) => s.state);
-  const patch = (body: object) => act(() => api('PATCH', `/api/employees/${e.id}`, body));
+  const [savedAt, setSavedAt] = useState(0);
+  const patch = async (body: object) => {
+    if ((await act(() => api('PATCH', `/api/employees/${e.id}`, body))) !== undefined) setSavedAt(Date.now());
+  };
   return (
-    <div className="grid gap-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Nome" hint="Usado pelos colegas para te consultar.">
-          <Input defaultValue={e.name} key={e.name} onBlur={(ev) => ev.target.value.trim() && ev.target.value !== e.name && patch({ name: ev.target.value })} />
-        </Field>
-        <Field label="Departamento">
-          <Select value={e.department_id} onChange={(ev) => patch({ departmentId: Number(ev.target.value) })}>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Provedor">
-          <Select value={e.provider_id ?? ''} onChange={(ev) => patch({ providerId: ev.target.value ? Number(ev.target.value) : null })}>
-            <option value="">Nativo (assinatura Claude)</option>
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} · {p.model}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Modelo" hint={e.provider_id ? 'Com provedor remoto vale o modelo do provedor.' : undefined}>
-          <ModelSelect value={e.model ?? ''} onChange={(model) => patch({ model })} />
-        </Field>
-        <Field
-          label="Onde trabalha"
-          hint={e.isolation === 'worktree' ? 'Cada task num git worktree próprio; sua cópia do repo fica intocada.' : 'Na sua cópia do repo; tasks extras em paralelo vão para worktrees.'}
-        >
-          <Select value={e.isolation} onChange={(ev) => patch({ isolation: ev.target.value })}>
-            <option value="repo">Na cópia principal do repo</option>
-            <option value="worktree">Sempre num worktree isolado</option>
-          </Select>
-        </Field>
-        <Field label="Tasks em paralelo" hint="Acima de 1, as que não cabem na cópia principal vão para worktrees.">
-          <Select value={e.max_parallel} onChange={(ev) => patch({ maxParallel: Number(ev.target.value) })}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </div>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={!!e.auto_edit} onChange={(ev) => patch({ autoEdit: ev.target.checked })} /> Editar arquivos na pasta de trabalho sem pedir
-      </label>
-      <Field
-        label="Ficha"
-        hint={
-          e.profile_source === 'manual'
-            ? 'Editada à mão: não é refeita automaticamente. "Refazer ficha" volta ao modo automático.'
-            : 'Os colegas usam a ficha para saber o que perguntar. Refeita sozinha quando o repo anda muitos commits.'
-        }
-      >
-        <Textarea rows={5} defaultValue={e.profile} key={e.profile} onBlur={(ev) => ev.target.value !== e.profile && patch({ profile: ev.target.value })} />
-      </Field>
-      {e.allow_rules.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-zinc-500">Sempre permitido:</span>
-          {e.allow_rules.map((r) => (
-            <Chip key={r}>
-              {r}
-              <button title="Remover regra" onClick={() => patch({ allowRules: e.allow_rules.filter((x) => x !== r) })}>
-                ✕
-              </button>
-            </Chip>
-          ))}
+    <div className="grid gap-6">
+      <Section title="Identidade" aside={<Saved at={savedAt} />}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Nome" hint="Como os colegas te chamam.">
+            <Input defaultValue={e.name} key={e.name} onBlur={(ev) => ev.target.value.trim() && ev.target.value !== e.name && patch({ name: ev.target.value })} />
+          </Field>
+          <Field label="Departamento">
+            <Select value={e.department_id} onChange={(ev) => patch({ departmentId: Number(ev.target.value) })}>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
-      )}
-      <div className="flex gap-2">
-        <Button onClick={() => act(() => api('POST', `/api/employees/${e.id}/onboard`))}>Refazer ficha</Button>
-        <Button
-          variant="danger"
-          onClick={async () => {
-            if (!confirm(`Demitir ${e.name}?`)) return;
+      </Section>
+
+      <Section title="Modelo">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Provedor">
+            <Select value={e.provider_id ?? ''} onChange={(ev) => patch({ providerId: ev.target.value ? Number(ev.target.value) : null })}>
+              <option value="">Nativo (assinatura Claude)</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} · {p.model}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Modelo" hint={e.provider_id ? 'Com provedor remoto vale o modelo do provedor.' : undefined}>
+            <ModelSelect value={e.model ?? ''} onChange={(model) => patch({ model })} />
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="Área de trabalho">
+        <div className="grid gap-1.5">
+          <Segmented
+            value={e.isolation}
+            onChange={(isolation) => patch({ isolation })}
+            className="w-full [&>button]:flex-1"
+            size="sm"
+            options={[
+              { value: 'repo', label: 'Cópia principal' },
+              { value: 'worktree', label: 'Worktree isolado' },
+            ]}
+          />
+          <p className="text-xs text-zinc-500">
+            {e.isolation === 'worktree' ? 'Cada tarefa num git worktree próprio; sua cópia do repo fica intocada.' : 'Trabalha na sua cópia do repo; tarefas extras em paralelo vão para worktrees.'}
+          </p>
+        </div>
+        <SettingRow title="Tarefas em paralelo" description="Acima de 1, as que não cabem na cópia principal vão para worktrees.">
+          <Stepper value={e.max_parallel} min={1} max={5} onChange={(maxParallel) => patch({ maxParallel })} />
+        </SettingRow>
+      </Section>
+
+      <Section title="Permissões">
+        <SettingRow title="Editar sem pedir" description="Edit/Write dentro da pasta de trabalho não pedem permissão.">
+          <Switch label="Editar sem pedir" checked={!!e.auto_edit} onChange={(autoEdit) => patch({ autoEdit })} />
+        </SettingRow>
+        {e.allow_rules.length > 0 && (
+          <div className="grid gap-1.5">
+            <span className="text-xs text-zinc-500">Sempre permitido (clique para remover):</span>
+            <div className="flex flex-wrap gap-1.5">
+              {e.allow_rules.map((r) => (
+                <button
+                  key={r}
+                  title="Remover regra"
+                  onClick={() => patch({ allowRules: e.allow_rules.filter((x) => x !== r) })}
+                  className="group inline-flex animate-pop items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 font-mono text-[11px] text-zinc-700 transition hover:bg-red-100 hover:text-red-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-red-950 dark:hover:text-red-300"
+                >
+                  {r}
+                  <Icon name="x" className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Ficha" aside={<Chip tone={e.profile_source === 'manual' ? 'amber' : 'default'}>{e.profile_source === 'manual' ? 'editada à mão' : 'automática'}</Chip>}>
+        <Field
+          label="O que este funcionário sabe"
+          hint={
+            e.profile_source === 'manual'
+              ? 'Editada à mão: não é refeita sozinha. "Refazer ficha" volta ao modo automático.'
+              : 'Os colegas usam a ficha para saber o que perguntar. Refeita sozinha quando o repo anda muitos commits.'
+          }
+        >
+          <Textarea rows={6} defaultValue={e.profile} key={e.profile} onBlur={(ev) => ev.target.value !== e.profile && patch({ profile: ev.target.value })} />
+        </Field>
+        <div>
+          <Button size="sm" icon="refresh" onClick={() => act(() => api('POST', `/api/employees/${e.id}/onboard`))}>
+            Refazer ficha
+          </Button>
+        </div>
+      </Section>
+
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 p-3 dark:border-red-900/50">
+        <div>
+          <div className="text-sm font-medium">Demitir {e.name}</div>
+          <p className="text-xs text-zinc-500">Remove o funcionário e o histórico de tarefas dele. O repositório não é tocado.</p>
+        </div>
+        <ConfirmButton
+          icon="trash"
+          size="sm"
+          confirm="Confirmar demissão"
+          onConfirm={async () => {
             if ((await act(() => api('DELETE', `/api/employees/${e.id}`))) !== undefined) selectEmployee(null);
           }}
         >
           Demitir
-        </Button>
+        </ConfirmButton>
       </div>
     </div>
   );

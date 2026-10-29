@@ -14,7 +14,7 @@ const TOOLS = [
   {
     name: 'ask_colleague',
     description:
-      'Pergunta algo ao funcionário responsável por outro repositório e espera a resposta. Ele consulta o código dele em modo somente leitura. Use em vez de ler ou editar outros repositórios diretamente.',
+      'Pergunta algo ao funcionário responsável por outro repositório e espera a resposta. Ele só lê o código dele (Read, Grep, Glob): sem shell, sem gh, sem alterar nada. Use em vez de ler outros repositórios diretamente; para qualquer ação no repositório dele (mudar código, revisar ou aprovar PR, rodar comando), use delegate_task.',
     inputSchema: {
       type: 'object',
       properties: { to: str('Nome do funcionário (veja directory)'), question: str('Pergunta autocontida, com o contexto necessário') },
@@ -24,7 +24,7 @@ const TOOLS = [
   {
     name: 'delegate_task',
     description:
-      'Cria uma task para outro funcionário quando uma mudança precisa acontecer no repositório dele. Pode exigir aprovação do chefe e roda de forma independente: não espera a conclusão.',
+      'Cria uma task para outro funcionário quando algo precisa ser feito no repositório dele (mudar código, revisar ou aprovar PR, rodar comando). Pode exigir aprovação do chefe e roda de forma independente: não espera a conclusão.',
     inputSchema: {
       type: 'object',
       properties: { to: str('Nome do funcionário (veja directory)'), title: str('Título curto da task'), description: str('O que fazer, por quê e critérios de pronto') },

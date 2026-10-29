@@ -31,16 +31,19 @@ export function threads(employeeId: number) {
         updatedAt: last.finished_at ?? last.created_at,
         worktree: last.worktree,
         resumedSession: root.resume_session_id,
+        repeatEvery: turns.find((t) => t.status === 'scheduled' && t.repeat_every)?.repeat_every ?? null,
       };
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 60);
 }
 
+const SHOWN_TURNS = 30;
+
 export function thread(id: number) {
   const tasks = all<Task>('SELECT * FROM tasks WHERE thread_id = ? ORDER BY id', id);
   if (!tasks.length) throw new HttpError(404, 'conversa não encontrada');
-  return { id, employeeId: tasks[0].employee_id, title: tasks[0].title, tasks, events: eventsOfThread(id) };
+  return { id, employeeId: tasks[0].employee_id, title: tasks[0].title, tasks, events: eventsOfThread(id, SHOWN_TURNS), hiddenTurns: Math.max(0, tasks.length - SHOWN_TURNS) };
 }
 
 export function startThread(employeeId: number, text: string, resumeSessionId?: string) {

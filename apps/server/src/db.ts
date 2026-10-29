@@ -112,7 +112,9 @@ addColumn('tasks', 'thread_id', 'INTEGER'); // conversa: a task raiz e as contin
 addColumn('tasks', 'resume_session_id', 'TEXT'); // sessão do Claude Code (de fora do escritório) a retomar
 addColumn('tasks', 'cwd', 'TEXT'); // pasta onde o turno rodou: a sessão do Claude fica guardada por pasta
 addColumn('tasks', 'run_at', 'TEXT'); // agendada: só entra na fila a partir deste instante (ISO UTC)
+addColumn('tasks', 'repeat_every', 'INTEGER'); // minutos; a série inteira divide a mesma conversa
 addColumn('usage', 'session_id', 'TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS tasks_thread ON tasks (thread_id)');
 
 // Tasks anteriores às conversas: continuação do mesmo funcionário herda a conversa da origem.
 {
@@ -174,6 +176,7 @@ export type Task = {
   resume_session_id: string | null;
   cwd: string | null;
   run_at: string | null;
+  repeat_every: number | null;
 };
 export type Approval = {
   id: number;

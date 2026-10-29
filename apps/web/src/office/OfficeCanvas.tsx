@@ -25,6 +25,7 @@ export function OfficeCanvas({ onBoss }: { onBoss: () => void }) {
     });
     let asleep = false;
     const push = (s = useOffice.getState()) => {
+      scene.setDark(s.dark);
       scene.setData(s.state, s.selectedEmployeeId);
       // Fora da aba Escritório a cena dorme (sem gastar CPU) e não perde estado.
       if (asleep === (s.tab === 'office')) {
@@ -36,7 +37,7 @@ export function OfficeCanvas({ onBoss }: { onBoss: () => void }) {
     push();
     const unsubscribe = useOffice.subscribe((s) => push(s));
     const off = onOfficeEvent((e, replay) => scene.handle(e, replay));
-    officeView.fit = () => scene.fitView();
+    officeView.fit = () => scene.fitView(true);
     return () => {
       unsubscribe();
       off();

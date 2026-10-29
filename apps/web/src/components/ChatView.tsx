@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ACTIVITY, money, names, STATUS, time } from '../format';
+import { ACTIVITY, clock, everyLabel, money, names, STATUS, time, when } from '../format';
 import { act, api, openChat, startReplay, toast, useOffice } from '../store';
 import type { Approval, Employee, OfficeEvent, Task, Thread, ThreadDetail } from '../types';
 import { ApprovalCard, QuestionCard } from './ApprovalCard';
+import { Icon } from './icons';
 import { Markdown } from './Markdown';
-import { Button, Chip, cx } from './ui';
+import { Button, Chip, cx, Skeleton, Spinner } from './ui';
 
 type Todo = { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string };
 type Row =
@@ -15,7 +16,8 @@ type Row =
   | { kind: 'note'; key: string; icon: string; text: string; detail?: string; tone?: 'warn' }
   | { kind: 'question'; key: string; approvalId: number; text: string }
   | { kind: 'approval'; key: string; approvalId: number }
-  | { kind: 'end'; key: string; status: string; cost: number; error?: string };
+  | { kind: 'end'; key: string; status: string; cost: number; error?: string }
+  | { kind: 'run'; key: string; ts: string };
 
 // O que o agente fez entre uma fala e outra, em linguagem natural.
 const ACTIONS: [RegExp, string, string, string][] = [
@@ -45,6 +47,10 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
   const rows: Row[] = [];
   let tools: OfficeEvent[] = [];
   let todosAt = -1; // um checklist por turno, sempre o mais recente
+  // Série: o pedido aparece uma vez; as execuções seguintes viram divisores quando começam de fato
+  // (a próxima é criada antes de a atual rodar, então ancorar no task.created embaralharia a ordem).
+  let seriesShown = false;
+  const runs = new Set<number>();
   const flush = () => {
     if (tools.length) rows.push({ kind: 'tools', key: `t${tools[0].id}`, items: tools });
     tools = [];
@@ -54,15 +60,27 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
     const mine = e.employeeId === employeeId;
     switch (e.type) {
       case 'task.created':
+        if (d.repeat_every && seriesShown) {
+          runs.add(d.id);
+          break;
+        }
         flush();
         todosAt = -1;
+        seriesShown ||= !!d.repeat_every;
         rows.push({
           kind: 'user',
           key: `u${e.id}`,
           text: d.body || d.title,
           ts: e.ts,
           who: d.origin === 'agent' ? `${name(d.from_employee_id)} (colega)` : d.origin === 'comms' ? 'Comunicação' : 'Você',
+          note: d.repeat_every ? `🔁 ${everyLabel(d.repeat_every)}` : undefined,
         });
+        break;
+      case 'task.status':
+        if (d.status !== 'running' || !runs.delete(e.taskId!)) break;
+        flush();
+        todosAt = -1;
+        rows.push({ kind: 'run', key: `r${e.id}`, ts: e.ts });
         break;
       case 'boss.message':
         flush();
@@ -145,20 +163,27 @@ export function ChatView({ employee }: { employee: Employee }) {
   }, [threadId]);
 
   // Histórico do server + eventos ao vivo dos turnos desta conversa (inclusive turnos criados depois).
-  const { events, tasks } = useMemo(() => {
-    if (!detail) return { events: [] as OfficeEvent[], tasks: [] as Task[] };
+  const { events, tasks, current } = useMemo(() => {
+    if (!detail) return { events: [] as OfficeEvent[], tasks: [] as Task[], current: [] as Task[] };
     const ids = new Set(detail.tasks.map((t) => t.id));
     for (const e of live) if (e.type === 'task.created' && e.data.thread_id === detail.id) ids.add(e.data.id);
     const last = detail.events.at(-1)?.id ?? 0;
+    // Situação (rodando, fila, série) só do estado ao vivo; o histórico da conversa completa contagem e custo,
+    // já que o estado guarda só a última execução encerrada de cada série.
+    const current = state.tasks.filter((t) => ids.has(t.id));
+    const fresh = new Map(current.map((t) => [t.id, t]));
+    const old = new Map(detail.tasks.map((t) => [t.id, t]));
     return {
       events: [...detail.events, ...live.filter((e) => e.id > last && e.taskId != null && ids.has(e.taskId))],
-      tasks: state.tasks.filter((t) => ids.has(t.id)),
+      tasks: [...ids].sort((a, b) => a - b).flatMap((id) => fresh.get(id) ?? old.get(id) ?? []),
+      current,
     };
   }, [detail, live, state.tasks]);
 
   const rows = useMemo(() => buildRows(events, employee.id, name), [events, employee.id, name]);
-  const running = tasks.find((t) => t.status === 'running');
-  const queued = tasks.find((t) => t.status === 'scheduled' || t.status === 'queued' || t.status === 'pending_approval');
+  const series = current.find((t) => t.status === 'scheduled' && t.repeat_every);
+  const running = current.find((t) => t.status === 'running');
+  const queued = current.find((t) => t.status === 'scheduled' || t.status === 'queued' || t.status === 'pending_approval');
   const cost = tasks.reduce((s, t) => s + t.cost_usd, 0);
   const taskIds = new Set(tasks.map((t) => t.id));
   const waiting = state.approvals.filter((a) => a.task_id != null && taskIds.has(a.task_id));
@@ -166,12 +191,25 @@ export function ChatView({ employee }: { employee: Employee }) {
 
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const [optimistic, setOptimistic] = useState<string | null>(null);
+  useEffect(() => setOptimistic(null), [rows.length]);
   useEffect(() => {
-    if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [rows.length, running?.id, waiting.length]);
+    if (stick.current && scroller.current) scroller.current.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' });
+  }, [rows.length, running?.id, waiting.length, optimistic]);
+
+  // Linhas que já existiam ao abrir a conversa entram sem animação; só as novas deslizam.
+  const seen = useRef<{ thread: number; keys: Set<string> } | null>(null);
+  if (detail && seen.current?.thread !== detail.id) seen.current = { thread: detail.id, keys: new Set(rows.map((r) => r.key)) };
+  const lastRun = tasks.findLast((t) => t.status !== 'scheduled' && t.status !== 'queued');
 
   const send = async (text: string) => {
     stick.current = true;
+    if (!question) setOptimistic(text);
+    const ok = await deliver(text);
+    if (!ok) setOptimistic(null);
+    return ok;
+  };
+  const deliver = async (text: string) => {
     // Pergunta pendente: o que você escreve vira a resposta dela.
     if (question) {
       const q = question.payload.questions?.[0]?.question;
@@ -193,7 +231,7 @@ export function ChatView({ employee }: { employee: Employee }) {
       : running
         ? `${ACTIVITY[employee.activity].icon} ${ACTIVITY[employee.activity].label}…`
         : queued?.status === 'scheduled'
-          ? `agendada para ${new Date(queued.run_at!).toLocaleString()}`
+          ? `${queued.repeat_every ? `série ${everyLabel(queued.repeat_every)} · próxima` : 'agendada'} ${when(queued.run_at!)}`
           : queued?.status === 'pending_approval'
           ? 'aguardando aprovação da delegação…'
           : queued
@@ -204,22 +242,23 @@ export function ChatView({ employee }: { employee: Employee }) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-zinc-200 pb-2 dark:border-zinc-800">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{target?.kind === 'thread' ? (detail?.title ?? '…') : target?.kind === 'native' ? `↪ ${target.title}` : 'Nova conversa'}</div>
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium">{target?.kind === 'thread' ? (detail?.title ?? '…') : target?.kind === 'native' ? `↪ ${target.title}` : 'Nova conversa'}</span>
+            {series && <Chip tone="violet" icon="repeat">{everyLabel(series.repeat_every!)}</Chip>}
+          </div>
           {target?.kind === 'thread' && (
-            <div className="text-xs text-zinc-500">
-              {tasks.length} turno(s) · {money(cost)}
-              {tasks.at(-1)?.worktree && ' · 🌿 worktree'}
+            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+              <span>{tasks.length} turno(s) · {money(cost)}</span>
+              {tasks.at(-1)?.worktree && <Icon name="branch" className="h-3 w-3" />}
             </div>
           )}
         </div>
-        {target?.kind === 'thread' && tasks.length > 0 && (
-          <Button variant="ghost" title="Assistir o último turno no escritório" onClick={() => startReplay(tasks.at(-1)!.id)}>
-            ▶️
-          </Button>
+        {target?.kind === 'thread' && lastRun && (
+          <Button variant="ghost" size="icon" icon="play" title="Assistir o último turno no escritório" onClick={() => startReplay(lastRun.id)} />
         )}
         {target?.kind !== 'new' && (
-          <Button variant="ghost" onClick={() => openChat(employee.id, { kind: 'new' })}>
-            + Nova
+          <Button variant="ghost" size="sm" icon="plus" onClick={() => openChat(employee.id, { kind: 'new' })}>
+            Nova
           </Button>
         )}
       </div>
@@ -237,22 +276,49 @@ export function ChatView({ employee }: { employee: Employee }) {
             Continuando uma sessão do Claude Code aberta fora do escritório. {employee.name} trabalha numa cópia dela: a sessão original não é alterada.
           </p>
         )}
-        {target?.kind === 'new' && (
-          <p className="mt-6 text-center text-sm text-zinc-500">
-            Converse com <b>{employee.name}</b>. Cada mensagem continua a mesma sessão, com todo o contexto anterior.
+        {target?.kind === 'new' && !optimistic && (
+          <div className="mt-8 grid animate-fade-in justify-items-center gap-2 text-center">
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-600/10 text-blue-600 dark:text-blue-400">
+              <Icon name="message" className="h-6 w-6" />
+            </div>
+            <p className="max-w-xs text-sm text-zinc-500">
+              Converse com <b className="text-zinc-800 dark:text-zinc-200">{employee.name}</b>. Cada mensagem continua a mesma sessão, com todo o contexto anterior.
+            </p>
+          </div>
+        )}
+        {target?.kind === 'thread' && !detail && !optimistic && (
+          <div className="grid gap-3">
+            <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
+            <Skeleton className="h-20 w-5/6 rounded-2xl" />
+            <Skeleton className="h-4 w-1/3" />
+          </div>
+        )}
+        {series && (
+          <p className="mb-3 flex items-center gap-2 rounded-lg bg-violet-50 p-2 text-xs text-violet-800 dark:bg-violet-950/40 dark:text-violet-200">
+            <Icon name="repeat" className="h-3.5 w-3.5" /> Série {everyLabel(series.repeat_every!)} · próxima {when(series.run_at!)}. Cada execução aparece como um turno abaixo.
           </p>
         )}
-        <div className="grid gap-2.5">
+        {detail && detail.hiddenTurns > 0 && (
+          <p className="mb-3 text-center text-xs text-zinc-400">+{detail.hiddenTurns} turno(s) anteriores ocultos</p>
+        )}
+        <div className="grid gap-3">
           {rows.map((r) => (
-            <RowView key={r.key} row={r} />
+            <div key={r.key} className={cx('grid', !seen.current?.keys.has(r.key) && 'animate-rise')}>
+              <RowView row={r} />
+            </div>
           ))}
+          {optimistic && (
+            <div className="ml-10 animate-rise justify-self-end opacity-70">
+              <div className="rounded-2xl rounded-br-md bg-blue-600 px-3.5 py-2 text-sm whitespace-pre-wrap text-white [overflow-wrap:anywhere]">{optimistic}</div>
+            </div>
+          )}
           {status && (
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-              {!waiting.length && (
-                <span className="inline-flex gap-0.5">
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:120ms]" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:240ms]" />
+            <div key={status} className="flex animate-fade-in items-center gap-2 text-xs text-zinc-500">
+              {!waiting.length && (running || queued?.status === 'queued') && (
+                <span className="inline-flex gap-1 rounded-full bg-zinc-100 px-2.5 py-2 dark:bg-zinc-800">
+                  {[0, 150, 300].map((d) => (
+                    <span key={d} className="h-1.5 w-1.5 animate-bob rounded-full bg-zinc-500" style={{ animationDelay: `${d}ms` }} />
+                  ))}
                 </span>
               )}
               {status}
@@ -262,8 +328,10 @@ export function ChatView({ employee }: { employee: Employee }) {
       </div>
 
       <Composer
+        key={employee.id}
+        draftKey={employee.id}
         busy={!!running && !question}
-        disabled={!!queued && !running}
+        disabled={!!queued && queued.status !== 'scheduled' && !running}
         onSend={send}
         onStop={running ? () => act(() => api('POST', `/api/tasks/${running.id}/stop`)) : undefined}
         placeholder={
@@ -279,17 +347,19 @@ function RowView({ row: r }: { row: Row }) {
   switch (r.kind) {
     case 'user':
       return (
-        <div className="ml-8 justify-self-end">
-          <div className="mb-0.5 text-right text-[11px] text-zinc-500">
+        <div className="ml-10 justify-self-end">
+          <div className="mb-1 text-right text-[11px] text-zinc-400">
             {r.who} · {time(r.ts)}
             {r.note && ` · ${r.note}`}
           </div>
-          <div className="rounded-2xl rounded-tr-sm bg-blue-600 px-3 py-2 text-sm whitespace-pre-wrap text-white [overflow-wrap:anywhere]">{r.text}</div>
+          <div className="rounded-2xl rounded-br-md bg-gradient-to-br from-blue-500 to-blue-600 px-3.5 py-2 text-sm whitespace-pre-wrap text-white shadow-sm shadow-blue-600/20 [overflow-wrap:anywhere]">
+            {r.text}
+          </div>
         </div>
       );
     case 'agent':
       return (
-        <div className="mr-6 rounded-2xl rounded-tl-sm bg-zinc-100 px-3 py-2 text-sm dark:bg-zinc-800/80">
+        <div className="mr-6 rounded-2xl rounded-bl-md bg-zinc-100 px-3.5 py-2.5 text-sm leading-relaxed dark:bg-zinc-800/70">
           <Markdown text={r.text} />
         </div>
       );
@@ -299,48 +369,82 @@ function RowView({ row: r }: { row: Row }) {
           <QuestionCard id={pending.id} who={null} payload={pending.payload} />
         </div>
       ) : (
-        <div className="mr-6 rounded-2xl rounded-tl-sm bg-zinc-100 px-3 py-2 text-sm whitespace-pre-wrap dark:bg-zinc-800/80">❓ {r.text}</div>
+        <div className="mr-6 rounded-2xl rounded-bl-md bg-zinc-100 px-3.5 py-2 text-sm whitespace-pre-wrap dark:bg-zinc-800/70">❓ {r.text}</div>
       );
     case 'approval':
       return pending ? <ApprovalCard approval={pending} compact /> : null;
     case 'tools':
       return (
-        <details className="text-xs text-zinc-500">
-          <summary className="cursor-pointer select-none">{summarizeTools(r.items)}</summary>
-          <ul className="mt-1 grid gap-1 border-l border-zinc-300 pl-2 dark:border-zinc-700">
+        <details className="group text-xs text-zinc-500">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-full px-2 py-1 transition select-none hover:bg-zinc-100 dark:hover:bg-zinc-800 [&::-webkit-details-marker]:hidden">
+            <Icon name="chevronRight" className="h-3 w-3 transition-transform duration-200 group-open:rotate-90" />
+            {summarizeTools(r.items)}
+          </summary>
+          <ul className="mt-1 ml-3 grid animate-fade-in gap-1 border-l border-zinc-200 pl-3 dark:border-zinc-800">
             {r.items.map((i) => (
               <li key={i.id} className="[overflow-wrap:anywhere]">
                 {actionOf(i.data.name)[1]} {i.data.description && <span className="text-zinc-600 dark:text-zinc-300">{i.data.description} </span>}
-                <span className="font-mono text-zinc-400">{i.data.name.startsWith('mcp__office__') ? i.data.name.slice(12) : i.data.name === 'Bash' ? '' : `${i.data.name} `}{i.data.summary}</span>
+                <span className="font-mono text-zinc-400">
+                  {i.data.name.startsWith('mcp__office__') ? i.data.name.slice(12) : i.data.name === 'Bash' ? '' : `${i.data.name} `}
+                  {i.data.summary}
+                </span>
               </li>
             ))}
           </ul>
         </details>
       );
-    case 'todos':
+    case 'todos': {
+      const done = r.todos.filter((t) => t.status === 'completed').length;
       return (
-        <div className="mr-6 rounded-xl border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
-          <div className="mb-1 text-xs font-medium text-zinc-500">📋 Plano</div>
-          <ul className="grid gap-0.5">
+        <div className="mr-6 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-zinc-500">
+            <Icon name="list" className="h-3.5 w-3.5" /> Plano
+            <span className="ml-auto tabular-nums">
+              {done}/{r.todos.length}
+            </span>
+          </div>
+          <div className="mb-2 h-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            <div className="h-full origin-left rounded-full bg-emerald-500 transition-transform duration-500 ease-[var(--ease-out-expo)]" style={{ transform: `scaleX(${done / Math.max(1, r.todos.length)})` }} />
+          </div>
+          <ul className="grid gap-1">
             {r.todos.map((t, i) => (
-              <li key={i} className={cx(t.status === 'completed' && 'text-zinc-400 line-through', t.status === 'in_progress' && 'font-medium')}>
-                {t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '⏳' : '○'} {t.status === 'in_progress' ? (t.activeForm ?? t.content) : t.content}
+              <li key={i} className={cx('flex items-start gap-2', t.status === 'completed' && 'text-zinc-400 line-through', t.status === 'in_progress' && 'font-medium')}>
+                <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center">
+                  {t.status === 'completed' ? (
+                    <Icon name="check" className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : t.status === 'in_progress' ? (
+                    <Spinner className="h-3.5 w-3.5 text-blue-500" />
+                  ) : (
+                    <span className="h-2.5 w-2.5 rounded-full border border-zinc-300 dark:border-zinc-600" />
+                  )}
+                </span>
+                {t.status === 'in_progress' ? (t.activeForm ?? t.content) : t.content}
               </li>
             ))}
           </ul>
         </div>
       );
+    }
     case 'note':
       return r.detail ? (
-        <details className={cx('text-xs', r.tone === 'warn' ? 'text-red-600' : 'text-zinc-500')}>
-          <summary className="cursor-pointer select-none">
+        <details className={cx('group text-xs', r.tone === 'warn' ? 'text-red-600 dark:text-red-400' : 'text-zinc-500')}>
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-full px-2 py-1 transition select-none hover:bg-zinc-100 dark:hover:bg-zinc-800 [&::-webkit-details-marker]:hidden">
+            <Icon name="chevronRight" className="h-3 w-3 transition-transform duration-200 group-open:rotate-90" />
             {r.icon} {r.text}
           </summary>
-          <p className="mt-1 border-l border-zinc-300 pl-2 whitespace-pre-wrap [overflow-wrap:anywhere] dark:border-zinc-700">{r.detail}</p>
+          <p className="mt-1 ml-3 animate-fade-in border-l border-zinc-200 pl-3 whitespace-pre-wrap [overflow-wrap:anywhere] dark:border-zinc-800">{r.detail}</p>
         </details>
       ) : (
-        <div className={cx('text-xs', r.tone === 'warn' ? 'text-red-600' : 'text-zinc-500')}>
+        <div className={cx('px-2 text-xs', r.tone === 'warn' ? 'text-red-600 dark:text-red-400' : 'text-zinc-500')}>
           {r.icon} {r.text}
+        </div>
+      );
+    case 'run':
+      return (
+        <div className="flex items-center gap-2 pt-2 text-[11px] font-medium text-violet-600 dark:text-violet-400">
+          <span className="h-px flex-1 bg-violet-200 dark:bg-violet-900/60" />
+          <Icon name="repeat" className="h-3 w-3" /> Execução das {clock(r.ts)}
+          <span className="h-px flex-1 bg-violet-200 dark:bg-violet-900/60" />
         </div>
       );
     case 'end':
@@ -352,14 +456,21 @@ function RowView({ row: r }: { row: Row }) {
             {r.cost > 0 && money(r.cost)}
             <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
           </div>
-          {r.error && <p className="text-xs text-red-600 [overflow-wrap:anywhere]">{r.error.slice(0, 400)}</p>}
+          {r.error && <p className="rounded-lg bg-red-50 p-2 text-xs text-red-700 [overflow-wrap:anywhere] dark:bg-red-950/40 dark:text-red-300">{r.error.slice(0, 400)}</p>}
         </div>
       );
   }
 }
 
-function Composer(p: { busy: boolean; disabled: boolean; placeholder: string; onSend: (text: string) => Promise<boolean>; onStop?: () => void }) {
-  const [text, setText] = useState('');
+// Rascunho por funcionário: trocar de aba ou de pessoa não perde o que estava escrito.
+const drafts = new Map<number, string>();
+
+function Composer(p: { draftKey: number; busy: boolean; disabled: boolean; placeholder: string; onSend: (text: string) => Promise<boolean>; onStop?: () => void }) {
+  const [text, setTextState] = useState(() => drafts.get(p.draftKey) ?? '');
+  const setText = (v: string) => {
+    drafts.set(p.draftKey, v);
+    setTextState(v);
+  };
   const [sending, setSending] = useState(false);
   const submit = async () => {
     if (!text.trim() || sending || p.disabled) return;
@@ -368,31 +479,35 @@ function Composer(p: { busy: boolean; disabled: boolean; placeholder: string; on
     setSending(false);
   };
   return (
-    <div className="border-t border-zinc-200 pt-2 dark:border-zinc-800">
-      <textarea
-        rows={Math.min(6, Math.max(2, text.split('\n').length))}
-        value={text}
-        disabled={p.disabled}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        placeholder={p.disabled ? 'Aguardando o turno na fila…' : p.placeholder}
-        className="w-full resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-zinc-700 dark:bg-zinc-900"
-      />
-      <div className="mt-1 flex items-center gap-2">
-        <span className="flex-1 text-[11px] text-zinc-400">Enter envia · Shift+Enter quebra linha</span>
-        {p.onStop && (
-          <Button variant="danger" onClick={p.onStop}>
-            Parar
+    <div className="border-t border-zinc-200 pt-3 dark:border-zinc-800">
+      <div className="rounded-xl border border-zinc-200 bg-white shadow-xs transition focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/15 dark:border-zinc-700/80 dark:bg-zinc-900">
+        <textarea
+          rows={Math.min(6, Math.max(1, text.split('\n').length))}
+          value={text}
+          disabled={p.disabled}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          placeholder={p.disabled ? 'Aguardando o turno na fila…' : p.placeholder}
+          className="max-h-40 w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-zinc-400"
+        />
+        <div className="flex items-center gap-2 px-2 pb-2">
+          <span className="flex-1 pl-1 text-[11px] text-zinc-400">
+            <b className="font-medium">Enter</b> envia · <b className="font-medium">Shift+Enter</b> quebra linha
+          </span>
+          {p.onStop && (
+            <Button variant="danger" size="sm" icon="stop" onClick={p.onStop}>
+              Parar
+            </Button>
+          )}
+          <Button variant="primary" size="sm" icon={p.busy ? 'zap' : 'arrowUp'} busy={sending} disabled={!text.trim() || p.disabled} onClick={submit}>
+            {p.busy ? 'Mandar agora' : 'Enviar'}
           </Button>
-        )}
-        <Button variant="primary" disabled={!text.trim() || sending || p.disabled} onClick={submit}>
-          {p.busy ? 'Mandar agora' : 'Enviar'}
-        </Button>
+        </div>
       </div>
     </div>
   );

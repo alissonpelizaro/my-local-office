@@ -74,7 +74,8 @@ function serveFile(res: ServerResponse, file: string, immutable = false) {
     'content-type': MIME[path.extname(file)] ?? 'application/octet-stream',
     'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
   });
-  fs.createReadStream(file).pipe(res);
+  // Arquivo some no meio de um `pnpm build`: encerra a resposta em vez de derrubar o servidor.
+  fs.createReadStream(file).on('error', () => res.end()).pipe(res);
 }
 
 // Ponte para provedores OpenAI-compatíveis: o Claude Code fala Messages com /bridge/:id e a ponte traduz.
@@ -109,7 +110,7 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/threads\/(\d+)\/messages$/, (b, [id]) => chat.sendToThread(Number(id), b.text)],
   ['GET', /^\/api\/models$/, () => models()],
   ['POST', /^\/api\/models\/refresh$/, () => refreshModels()],
-  ['POST', /^\/api\/tasks$/, (b) => office.createTask({ employeeId: b.employeeId, title: b.title, body: b.body, runAt: b.runAt })],
+  ['POST', /^\/api\/tasks$/, (b) => office.createTask({ employeeId: b.employeeId, title: b.title, body: b.body, runAt: b.runAt, repeatEvery: b.repeatEvery })],
   ['GET', /^\/api\/tasks\/(\d+)\/events$/, (_, [id]) => eventsOfTask(Number(id))],
   ['POST', /^\/api\/tasks\/(\d+)\/message$/, (b, [id]) => office.messageTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/followup$/, (b, [id]) => office.followupTask(Number(id), b.text)],

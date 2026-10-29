@@ -40,8 +40,9 @@ export const eventsAfter = (after: number | null, limit = 500) =>
 
 // Timeline completa de uma task (inclui as consultas aos colegas), base do replay.
 export const eventsOfTask = (taskId: number) => all<Row>('SELECT * FROM events WHERE task_id = ? ORDER BY id', taskId).map(toEvent);
-export const eventsOfThread = (threadId: number) =>
-  all<Row>('SELECT * FROM events WHERE task_id IN (SELECT id FROM tasks WHERE thread_id = ?) ORDER BY id', threadId).map(toEvent);
+// Só os últimos turnos: uma série recorrente acumula centenas de execuções na mesma conversa.
+export const eventsOfThread = (threadId: number, turns: number) =>
+  all<Row>('SELECT * FROM events WHERE task_id IN (SELECT id FROM tasks WHERE thread_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id', threadId, turns).map(toEvent);
 
 export type Activity = 'idle' | 'thinking' | 'reading' | 'typing' | 'running' | 'talking' | 'consulting' | 'delegating' | 'waiting' | 'onboarding';
 export const activities = new Map<number, Activity>();

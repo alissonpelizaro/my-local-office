@@ -50,6 +50,7 @@ export type Task = {
   thread_id: number;
   resume_session_id: string | null;
   run_at: string | null;
+  repeat_every: number | null; // minutos
 };
 
 export type Thread = {
@@ -64,9 +65,10 @@ export type Thread = {
   updatedAt: string;
   worktree: string | null;
   resumedSession: string | null;
+  repeatEvery: number | null; // série recorrente ainda ativa
 };
 
-export type ThreadDetail = { id: number; employeeId: number; title: string; tasks: Task[]; events: OfficeEvent[] };
+export type ThreadDetail = { id: number; employeeId: number; title: string; tasks: Task[]; events: OfficeEvent[]; hiddenTurns: number };
 
 export type NativeSession = { sessionId: string; title: string; firstMessage: string; updatedAt: string };
 

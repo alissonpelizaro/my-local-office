@@ -1,31 +1,88 @@
-import { useState } from 'react';
-import { act, api, useOffice } from '../store';
+import { type ReactNode, useState } from 'react';
+import { act, api, openChat, useOffice } from '../store';
 import type { Approval, Question, QuestionPayload, ToolPayload } from '../types';
+import { Icon, type IconName } from './icons';
 import { Button, Chip, cx, Input } from './ui';
 
-const decide = (id: number, body: { decision: string; text?: string; answers?: Record<string, string> }) => act(() => api('POST', `/api/approvals/${id}`, body));
+type Body = { decision: string; text?: string; answers?: Record<string, string> };
+
+// Decisão otimista: o card sai animando na hora; se o servidor recusar, volta (o estado é recarregado).
+function useDecide(id: number) {
+  const [leaving, setLeaving] = useState(false);
+  const decide = async (body: Body) => {
+    setLeaving(true);
+    if ((await act(() => api('POST', `/api/approvals/${id}`, body))) === undefined) setLeaving(false);
+  };
+  return { leaving, decide };
+}
+
+const leave = (leaving: boolean) => cx('transition duration-200 ease-out', leaving && 'pointer-events-none scale-[0.97] opacity-0');
 
 export function ApprovalCard({ approval: a, compact = false }: { approval: Approval; compact?: boolean }) {
   const employee = useOffice((s) => s.state.employees.find((e) => e.id === a.employee_id));
+  const thread = useOffice((s) => s.state.tasks.find((t) => t.id === a.task_id)?.thread_id);
   const who = employee?.name ?? 'escritório';
-  if (a.kind === 'question') return <QuestionCard id={a.id} who={compact ? null : who} payload={a.payload} />;
-  if (a.kind === 'tool') return <ToolCard id={a.id} who={who} payload={a.payload} taskId={compact ? null : a.task_id} />;
+  // Fora da conversa (gaveta, visão geral), dá para pular direto para ela.
+  const open = !compact && employee && thread ? () => openChat(employee.id, { kind: 'thread', id: thread }) : undefined;
+  if (a.kind === 'question') return <QuestionCard id={a.id} who={compact ? null : who} payload={a.payload} onOpen={open} />;
+  if (a.kind === 'tool') return <ToolCard id={a.id} who={who} payload={a.payload} onOpen={open} />;
+  return <DelegationCard id={a.id} payload={a.payload} />;
+}
+
+function Shell({ tone, icon, title, extra, onOpen, children, footer, leaving }: { tone: 'amber' | 'red' | 'blue'; icon: IconName; title: ReactNode; extra?: ReactNode; onOpen?: () => void; children?: ReactNode; footer: ReactNode; leaving: boolean }) {
+  const t = {
+    amber: { box: 'border-amber-300/80 dark:border-amber-800/70', head: 'bg-amber-50 dark:bg-amber-950/30', icon: 'bg-amber-500' },
+    red: { box: 'border-red-300 dark:border-red-900', head: 'bg-red-50 dark:bg-red-950/40', icon: 'bg-red-600' },
+    blue: { box: 'border-blue-200 dark:border-blue-900/70', head: 'bg-blue-50 dark:bg-blue-950/30', icon: 'bg-blue-600' },
+  }[tone];
   return (
-    <div className="rounded-lg border-2 border-amber-400 bg-amber-50/60 p-3 text-sm dark:bg-amber-950/20">
-      <div>
-        <b>{a.payload.from ?? '?'}</b> quer delegar a <b>{a.payload.to}</b>:
+    <div className={cx('animate-pop overflow-hidden rounded-2xl border bg-white text-sm shadow-sm dark:bg-zinc-900', t.box, leave(leaving))}>
+      <div className={cx('flex flex-wrap items-center gap-2 px-3 py-2', t.head)}>
+        <span className={cx('grid h-6 w-6 shrink-0 place-items-center rounded-full text-white', t.icon)}>
+          <Icon name={icon} className="h-3.5 w-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">{title}</span>
+        {extra}
+        {onOpen && (
+          <button onClick={onOpen} className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+            ver conversa <Icon name="chevronRight" className="h-3 w-3" />
+          </button>
+        )}
       </div>
-      <p className="mt-1 font-medium">{a.payload.title}</p>
-      {a.payload.body && <p className="mt-1 max-h-40 overflow-auto text-xs whitespace-pre-wrap text-zinc-600 dark:text-zinc-400">{a.payload.body}</p>}
-      <div className="mt-2 flex gap-2">
-        <Button variant="primary" onClick={() => decide(a.id, { decision: 'allow' })}>
-          Aprovar task
-        </Button>
-        <Button variant="danger" onClick={() => decide(a.id, { decision: 'deny' })}>
-          Recusar
-        </Button>
-      </div>
+      {children && <div className="grid gap-2 px-3 pt-3">{children}</div>}
+      <div className="flex flex-wrap items-center gap-2 p-3">{footer}</div>
     </div>
+  );
+}
+
+// ---------- delegação ----------
+
+function DelegationCard({ id, payload: p }: { id: number; payload: Extract<Approval, { kind: 'delegation' }>['payload'] }) {
+  const { leaving, decide } = useDecide(id);
+  return (
+    <Shell
+      tone="amber"
+      icon="arrowRight"
+      leaving={leaving}
+      title={
+        <>
+          <b>{p.from ?? '?'}</b> quer delegar a <b>{p.to}</b>
+        </>
+      }
+      footer={
+        <>
+          <Button variant="primary" size="sm" icon="check" onClick={() => decide({ decision: 'allow' })}>
+            Aprovar
+          </Button>
+          <Button variant="danger" size="sm" onClick={() => decide({ decision: 'deny' })}>
+            Recusar
+          </Button>
+        </>
+      }
+    >
+      <p className="font-medium">{p.title}</p>
+      {p.body && <p className="max-h-40 overflow-auto text-xs whitespace-pre-wrap text-zinc-600 dark:text-zinc-400">{p.body}</p>}
+    </Shell>
   );
 }
 
@@ -46,8 +103,8 @@ function Code({ children, tone = 'plain' }: { children: string; tone?: 'plain' |
   return (
     <pre
       className={cx(
-        'max-h-48 overflow-auto rounded-md p-2 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]',
-        tone === 'del' ? 'bg-red-950/90 text-red-100' : tone === 'add' ? 'bg-emerald-950/90 text-emerald-100' : 'bg-zinc-900 text-zinc-100',
+        'max-h-48 overflow-auto rounded-lg p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]',
+        tone === 'del' ? 'bg-red-950/90 text-red-100' : tone === 'add' ? 'bg-emerald-950/90 text-emerald-100' : 'bg-zinc-900 text-zinc-100 dark:bg-black/60',
       )}
     >
       {children}
@@ -55,61 +112,73 @@ function Code({ children, tone = 'plain' }: { children: string; tone?: 'plain' |
   );
 }
 
-function ToolCard({ id, who, payload: p, taskId }: { id: number; who: string; payload: ToolPayload; taskId: number | null }) {
+function ToolCard({ id, who, payload: p, onOpen }: { id: number; who: string; payload: ToolPayload; onOpen?: () => void }) {
+  const { leaving, decide } = useDecide(id);
   const [text, setText] = useState('');
   const [denying, setDenying] = useState(false);
   const d = p.detail;
   return (
-    <div className={cx('rounded-xl border-2 p-3 text-sm', p.external ? 'border-red-500 bg-red-50/60 dark:bg-red-950/30' : 'border-amber-400 bg-amber-50/60 dark:bg-amber-950/20')}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span>
-          🔐 <b>{who}</b> {headline(p)}
-        </span>
-        {p.external && <Chip tone="red">sai da sua máquina</Chip>}
-        {p.outsideRepo && <Chip tone="amber">fora do repo</Chip>}
-        {taskId && <span className="text-xs text-zinc-500">task #{taskId}</span>}
-      </div>
-      <div className="mt-2 grid gap-1.5">
-        {d?.description && <p className="text-zinc-700 dark:text-zinc-300">{d.description}</p>}
-        {d?.command && <Code>{d.command}</Code>}
-        {d?.url && <code className="text-xs [overflow-wrap:anywhere]">{d.url}</code>}
-        {d?.before && <Code tone="del">{d.before}</Code>}
-        {d?.after && <Code tone={d.before ? 'add' : 'plain'}>{d.after}</Code>}
-        {!d && <Code>{p.summary}</Code>}
-      </div>
-      {denying ? (
-        <form
-          className="mt-2 flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            decide(id, { decision: 'deny', text });
-          }}
-        >
-          <Input autoFocus placeholder="Por quê? (o agente lê e ajusta)" value={text} onChange={(e) => setText(e.target.value)} />
-          <Button variant="danger">Negar</Button>
-        </form>
-      ) : (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Button variant="primary" onClick={() => decide(id, { decision: 'allow' })}>
-            Permitir
-          </Button>
-          {!p.external && (
-            <Button title={`Libera sempre para este funcionário: ${p.rule}`} onClick={() => decide(id, { decision: 'always' })}>
-              Sempre permitir
+    <Shell
+      tone={p.external ? 'red' : 'amber'}
+      icon={p.external ? 'alert' : 'lock'}
+      leaving={leaving}
+      onOpen={onOpen}
+      title={
+        <>
+          <b>{who}</b> {headline(p)}
+        </>
+      }
+      extra={
+        <>
+          {p.external && <Chip tone="red">sai da sua máquina</Chip>}
+          {p.outsideRepo && <Chip tone="amber">fora do repo</Chip>}
+        </>
+      }
+      footer={
+        denying ? (
+          <form
+            className="flex w-full animate-fade-in gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              decide({ decision: 'deny', text });
+            }}
+          >
+            <Input autoFocus placeholder="Por quê? (o agente lê e ajusta)" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setDenying(false))} />
+            <Button type="submit" variant="solidDanger" size="md">
+              Negar
             </Button>
-          )}
-          <Button variant="danger" onClick={() => setDenying(true)}>
-            Negar…
-          </Button>
-        </div>
-      )}
-    </div>
+          </form>
+        ) : (
+          <>
+            <Button variant="primary" size="sm" icon="check" onClick={() => decide({ decision: 'allow' })}>
+              Permitir
+            </Button>
+            {!p.external && (
+              <Button size="sm" title={`Libera sempre para este funcionário: ${p.rule}`} onClick={() => decide({ decision: 'always' })}>
+                Sempre permitir
+              </Button>
+            )}
+            <Button variant="danger" size="sm" className="ml-auto" onClick={() => setDenying(true)}>
+              Negar…
+            </Button>
+          </>
+        )
+      }
+    >
+      {d?.description && <p className="text-zinc-700 dark:text-zinc-300">{d.description}</p>}
+      {d?.command && <Code>{d.command}</Code>}
+      {d?.url && <code className="text-xs [overflow-wrap:anywhere]">{d.url}</code>}
+      {d?.before && <Code tone="del">{d.before}</Code>}
+      {d?.after && <Code tone={d.before ? 'add' : 'plain'}>{d.after}</Code>}
+      {!d && <Code>{p.summary}</Code>}
+    </Shell>
   );
 }
 
 // ---------- pergunta do agente ----------
 
-export function QuestionCard({ id, who, payload }: { id: number; who: string | null; payload: QuestionPayload }) {
+export function QuestionCard({ id, who, payload, onOpen }: { id: number; who: string | null; payload: QuestionPayload; onOpen?: () => void }) {
+  const { leaving, decide } = useDecide(id);
   const questions: Question[] = payload.questions?.length ? payload.questions : [{ question: payload.question, options: payload.options.map((label) => ({ label })) }];
   const structured = !!payload.questions?.length;
   const [picked, setPicked] = useState<Record<string, string[]>>({});
@@ -119,21 +188,38 @@ export function QuestionCard({ id, who, payload }: { id: number; who: string | n
   const single = questions.length === 1 && !questions[0].multiSelect;
 
   const submit = (answers: Record<string, string>) =>
-    structured ? decide(id, { decision: 'answer', answers }) : decide(id, { decision: 'answer', text: Object.values(answers)[0] });
+    structured ? decide({ decision: 'answer', answers }) : decide({ decision: 'answer', text: Object.values(answers)[0] });
 
   return (
-    <div className="rounded-2xl rounded-tl-sm border border-blue-300 bg-blue-50/70 p-3 text-sm dark:border-blue-900 dark:bg-blue-950/30">
-      {who && (
-        <div className="mb-1 text-xs text-zinc-500">
-          ❓ <b>{who}</b> pergunta
-        </div>
-      )}
-      <div className="grid gap-3">
+    <Shell
+      tone="blue"
+      icon="message"
+      leaving={leaving}
+      onOpen={onOpen}
+      title={who ? <><b>{who}</b> pergunta</> : 'Pergunta para você'}
+      footer={
+        <>
+          {(!single || Object.values(other).some((v) => v.trim())) && (
+            <Button variant="primary" size="sm" disabled={!complete} onClick={() => submit(Object.fromEntries(questions.map((q) => [q.question, answerOf(q)])))}>
+              Responder
+            </Button>
+          )}
+          <button className="text-xs text-zinc-500 hover:text-zinc-800 hover:underline dark:hover:text-zinc-200" onClick={() => decide({ decision: 'deny' })}>
+            Prefiro responder pela conversa
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-4">
         {questions.map((q) => {
           const chosen = picked[q.question] ?? [];
           return (
-            <div key={q.question} className="grid gap-1.5">
-              {q.header && <Chip tone="blue" className="justify-self-start">{q.header}</Chip>}
+            <div key={q.question} className="grid gap-2">
+              {q.header && (
+                <Chip tone="blue" className="justify-self-start">
+                  {q.header}
+                </Chip>
+              )}
               <p className="font-medium whitespace-pre-wrap">{q.question}</p>
               {(q.options ?? []).map((o) => {
                 const on = chosen.includes(o.label);
@@ -145,15 +231,23 @@ export function QuestionCard({ id, who, payload }: { id: number; who: string | n
                       setPicked((p) => ({ ...p, [q.question]: q.multiSelect ? (on ? chosen.filter((l) => l !== o.label) : [...chosen, o.label]) : [o.label] }));
                     }}
                     className={cx(
-                      'rounded-lg border px-3 py-2 text-left transition',
-                      on ? 'border-blue-500 bg-blue-100 dark:bg-blue-900/50' : 'border-zinc-300 bg-white hover:border-blue-400 dark:border-zinc-700 dark:bg-zinc-900',
+                      'group flex items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left transition duration-150 hover:-translate-y-px active:scale-[0.99]',
+                      on ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-500/15 dark:bg-blue-950/50' : 'border-zinc-200 bg-white hover:border-blue-400 hover:shadow-sm dark:border-zinc-700 dark:bg-zinc-900',
                     )}
                   >
-                    <div className="font-medium">
-                      {q.multiSelect && (on ? '☑ ' : '☐ ')}
-                      {o.label}
-                    </div>
-                    {o.description && <div className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{o.description}</div>}
+                    <span
+                      className={cx(
+                        'mt-0.5 grid h-4 w-4 shrink-0 place-items-center border transition',
+                        q.multiSelect ? 'rounded' : 'rounded-full',
+                        on ? 'border-blue-600 bg-blue-600 text-white' : 'border-zinc-300 group-hover:border-blue-400 dark:border-zinc-600',
+                      )}
+                    >
+                      {on && <Icon name="check" className="h-3 w-3 animate-pop" />}
+                    </span>
+                    <span>
+                      <span className="block font-medium">{o.label}</span>
+                      {o.description && <span className="mt-0.5 block text-xs text-zinc-600 dark:text-zinc-400">{o.description}</span>}
+                    </span>
                   </button>
                 );
               })}
@@ -169,16 +263,6 @@ export function QuestionCard({ id, who, payload }: { id: number; who: string | n
           );
         })}
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {(!single || Object.values(other).some((v) => v.trim())) && (
-          <Button variant="primary" disabled={!complete} onClick={() => submit(Object.fromEntries(questions.map((q) => [q.question, answerOf(q)])))}>
-            Responder
-          </Button>
-        )}
-        <button className="text-xs text-zinc-500 hover:underline" onClick={() => decide(id, { decision: 'deny' })}>
-          Prefiro responder pela conversa
-        </button>
-      </div>
-    </div>
+    </Shell>
   );
 }

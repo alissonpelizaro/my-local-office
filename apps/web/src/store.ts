@@ -13,21 +13,21 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
 }
 
 export type Tab = 'office' | 'tasks' | 'costs' | 'config';
-export type PanelTab = 'chat' | 'sessions' | 'activity' | 'settings';
+export type PanelTab = 'chat' | 'history' | 'settings';
+export type TaskView = 'active' | 'planned' | 'history';
+export type ConfigSection = 'team' | 'import' | 'providers' | 'office';
 export type Theme = 'light' | 'dark' | 'system';
-type Toast = { id: number; text: string; tone: 'error' | 'info' };
+type Toast = { id: number; text: string; tone: 'error' | 'info' | 'success'; action?: { label: string; run: () => void }; leaving?: boolean };
 
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-function applyTheme(theme: Theme) {
-  document.documentElement.classList.toggle('dark', theme === 'dark' || (theme === 'system' && prefersDark.matches));
-}
+const resolveDark = (t: Theme) => t === 'dark' || (t === 'system' && prefersDark.matches);
 const storedTheme = ((): Theme => {
   const t = localStorage.getItem('theme');
   return t === 'light' || t === 'dark' || t === 'system' ? t : 'system';
 })();
-applyTheme(storedTheme);
+document.documentElement.classList.toggle('dark', resolveDark(storedTheme));
 prefersDark.addEventListener('change', () => {
-  if (get().theme === 'system') applyTheme('system');
+  if (get().theme === 'system') setTheme('system');
 });
 
 type Store = {
@@ -37,6 +37,7 @@ type Store = {
   events: OfficeEvent[];
   tab: Tab;
   theme: Theme;
+  dark: boolean;
   selectedEmployeeId: number | null;
   selectedTaskId: number | null;
   replay: { taskId: number; total: number; index: number } | null;
@@ -44,6 +45,11 @@ type Store = {
   panelTab: PanelTab;
   chat: Record<number, ChatTarget>; // conversa aberta por funcionário
   models: Models | null;
+  newTask: { employeeId?: number } | null; // modal de nova tarefa aberto
+  inbox: boolean;
+  palette: boolean;
+  taskView: TaskView | null; // null: escolhe pela situação ao abrir
+  configSection: ConfigSection | null;
 };
 
 const EMPTY: OfficeState = {
@@ -72,6 +78,7 @@ export const useOffice = create<Store>(() => ({
   events: [],
   tab: 'office',
   theme: storedTheme,
+  dark: resolveDark(storedTheme),
   selectedEmployeeId: null,
   selectedTaskId: null,
   replay: null,
@@ -79,6 +86,11 @@ export const useOffice = create<Store>(() => ({
   panelTab: 'chat',
   chat: {},
   models: null,
+  newTask: null,
+  inbox: false,
+  palette: false,
+  taskView: null,
+  configSection: null,
 }));
 const set = useOffice.setState;
 const get = useOffice.getState;
@@ -87,19 +99,37 @@ export const setTab = (tab: Tab) => set({ tab });
 export const selectEmployee = (id: number | null) => set({ selectedEmployeeId: id, tab: 'office' });
 export const openTask = (id: number | null) => set({ selectedTaskId: id, tab: 'tasks' });
 export const setPanelTab = (panelTab: PanelTab) => set({ panelTab });
+export const openTasks = (taskView: TaskView) => set({ taskView, tab: 'tasks' });
+export const openConfig = (configSection: ConfigSection) => set({ configSection, tab: 'config' });
+export const openNewTask = (employeeId?: number) => set({ newTask: { employeeId }, palette: false });
+export const closeNewTask = () => set({ newTask: null });
+export const setInbox = (inbox: boolean) => set({ inbox, palette: false });
+export const setPalette = (palette: boolean) => set({ palette });
+
 export function setTheme(theme: Theme) {
   localStorage.setItem('theme', theme);
-  applyTheme(theme);
-  set({ theme });
+  const dark = resolveDark(theme);
+  const swap = () => {
+    document.documentElement.classList.toggle('dark', dark);
+    set({ theme, dark });
+  };
+  // Cross-fade da troca inteira (inclusive o canvas) em vez de cada cor mudar no seu tempo.
+  if (dark !== get().dark && 'startViewTransition' in document) document.startViewTransition(swap);
+  else swap();
 }
 export const openChat = (employeeId: number, target: ChatTarget) =>
-  set((s) => ({ chat: { ...s.chat, [employeeId]: target }, selectedEmployeeId: employeeId, panelTab: 'chat', tab: 'office' }));
+  set((s) => ({ chat: { ...s.chat, [employeeId]: target }, selectedEmployeeId: employeeId, panelTab: 'chat', tab: 'office', inbox: false, palette: false }));
 
+export const TOAST_MS = 6000;
 let toastId = 0;
-export function toast(text: string, tone: Toast['tone'] = 'error') {
+export function dismissToast(id: number) {
+  set((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t)) }));
+  setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 220);
+}
+export function toast(text: string, tone: Toast['tone'] = 'error', action?: Toast['action']) {
   const id = ++toastId;
-  set((s) => ({ toasts: [...s.toasts, { id, text, tone }] }));
-  setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 6000);
+  set((s) => ({ toasts: [...s.toasts.slice(-3), { id, text, tone, action }] }));
+  setTimeout(() => dismissToast(id), TOAST_MS);
 }
 
 export async function refresh() {
