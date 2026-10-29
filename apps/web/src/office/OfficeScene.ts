@@ -8,10 +8,13 @@ import type { Item } from './rooms';
 
 const { pt, mix, darken } = D;
 
-const DARK = window.matchMedia('(prefers-color-scheme: dark)').matches;
-const THEME = DARK
-  ? { void: 0x0e131b, hall: 0x2b3242, hallAlt: 0x272d3c, wall: 0x3a4357, wallTop: 0x5b6680, floorMix: 0x161b26, floorT: 0.6, desk: 0x6b4a2e, grass: 0x2f6b3a, tile: 0x57514b }
-  : { void: 0xd8dde6, hall: 0xc7cdd8, hallAlt: 0xbfc6d2, wall: 0xb4bcc9, wallTop: 0xe8ebf0, floorMix: 0xffffff, floorT: 0.8, desk: 0x9a6b3f, grass: 0x86c76f, tile: 0xf3ede4 };
+const THEMES = {
+  dark: { void: 0x0e131b, hall: 0x2b3242, hallAlt: 0x272d3c, wall: 0x3a4357, wallTop: 0x5b6680, floorMix: 0x161b26, floorT: 0.6, desk: 0x6b4a2e, grass: 0x2f6b3a, tile: 0x57514b },
+  light: { void: 0xd8dde6, hall: 0xc7cdd8, hallAlt: 0xbfc6d2, wall: 0xb4bcc9, wallTop: 0xe8ebf0, floorMix: 0xffffff, floorT: 0.8, desk: 0x9a6b3f, grass: 0x86c76f, tile: 0xf3ede4 },
+};
+// Segue o tema do app (setDark); a planta é redesenhada quando muda.
+let DARK = document.documentElement.classList.contains('dark');
+let THEME = DARK ? THEMES.dark : THEMES.light;
 
 const FLOOR_DEPTH = -1e6;
 const LABEL_DEPTH = 5e5;
@@ -136,14 +139,34 @@ export class OfficeScene extends Phaser.Scene {
     if (this.ready) this.apply();
   }
 
-  fitView() {
+  setDark(dark: boolean) {
+    if (dark === DARK) return;
+    DARK = dark;
+    THEME = dark ? THEMES.dark : THEMES.light;
+    if (!this.ready) return;
+    this.cameras.main.setBackgroundColor(THEME.void);
+    this.signature = ''; // força o rebuild com as cores novas
+    this.applied = undefined;
+    this.apply();
+  }
+
+  // animate: botão "Centralizar" desliza até o enquadramento; resize e primeira carga são instantâneos.
+  fitView(animate = false) {
     if (!this.plan) return;
     const b = this.plan.bounds;
     const cam = this.cameras.main;
     if (!cam.width || !cam.height) return;
-    cam.setZoom(Phaser.Math.Clamp(Math.min(cam.width / (b.w + 60), cam.height / (b.h + 60)), 0.3, 1.4));
-    cam.centerOn(b.x + b.w / 2, b.y + b.h / 2);
+    const zoom = Phaser.Math.Clamp(Math.min(cam.width / (b.w + 60), cam.height / (b.h + 60)), 0.3, 1.4);
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
     this.userMoved = false;
+    if (!animate) {
+      cam.setZoom(zoom);
+      cam.centerOn(cx, cy);
+      return;
+    }
+    cam.pan(cx, cy, 450, 'Cubic.easeOut', true);
+    cam.zoomTo(zoom, 450, 'Cubic.easeOut', true);
   }
 
   private apply() {

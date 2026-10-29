@@ -50,6 +50,12 @@ pnpm typecheck
   - Cada mensagem é um turno que retoma a mesma sessão do Claude (`--resume`), na mesma pasta onde a conversa começou. Se o worktree tiver sido descartado, é recriado no mesmo caminho.
   - Durante um turno, a mensagem entra na hora (stdin).
   - A aba Sessões lista as conversas do escritório e as sessões do Claude Code abertas fora dele (terminal, VS Code) no repo. Essas são retomadas com `--fork-session`, então a original não muda.
+- **Tarefas agendadas e recorrentes**: em **Nova tarefa** (botão no topo ou tecla `N`), escolha Agora, Agendar ou Repetir (ex.: a cada 15 min, a partir de agora).
+  - Cada execução da série, ao entrar na fila, já deixa a próxima agendada no mesmo ritmo. Por isso a série sobrevive a um restart; horários perdidos são pulados, não acumulados.
+  - Se a execução anterior ainda estiver na fila, o horário é pulado.
+  - A série inteira fica numa conversa só, com sessão nova a cada execução. Para encerrar, cancele a agendada ("Encerrar série").
+  - Só notifica no macOS quando uma execução falha.
+- **Atalhos**: `N` nova tarefa (para o funcionário aberto, se houver), `⌘K` busca funcionários, tarefas e ações, `Esc` fecha o painel.
 - **Instruções**: o Claude Code carrega o `~/.claude/CLAUDE.md` e o `CLAUDE.md` do repo sozinho. O `AGENTS.md` da raiz do repo vai no system prompt (tasks e consultas), a menos que o `CLAUDE.md` já importe com `@AGENTS.md`.
 - **Modelos**: a lista mostra os aliases (opus/sonnet/haiku, que acompanham a versão mais nova) com a versão real de hoje e as versões fixas. A versão vem do `init` do CLI, com o processo encerrado antes da chamada à API.
 - **Worktrees**: por funcionário, as tasks rodam na cópia principal ou sempre num worktree isolado (`data/worktrees/`). Com `max_parallel` > 1, as extras rodam em worktrees. Worktree sem mudanças é descartado sozinho; com trabalho, aparece na task para você revisar e remover.

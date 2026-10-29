@@ -1,14 +1,182 @@
 @import 'tailwindcss';
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Animações só com transform/opacity: o navegador compõe na GPU e fica em 60 fps. */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --animate-fade-in: fade-in 0.2s var(--ease-out-expo) both;
+  --animate-rise: rise 0.36s var(--ease-out-expo) both;
+  --animate-pop: pop 0.3s var(--ease-spring) both;
+  --animate-slide-in: slide-in 0.4s var(--ease-out-expo) both;
+  --animate-ping-soft: ping-soft 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-grow-y: grow-y 0.7s var(--ease-out-expo) both;
+  --animate-grow-x: grow-x 0.7s var(--ease-out-expo) both;
+  --animate-flash: flash 1.8s ease both;
+  --animate-wiggle: wiggle 0.5s var(--ease-spring);
+  --animate-bob: bob 1s ease-in-out infinite;
+}
+
+/* Fora do @theme: os diálogos e toasts usam alguns direto no CSS. */
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+@keyframes fade-out {
+  to { opacity: 0; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.94); }
+}
+@keyframes sink {
+  to { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(24px); }
+}
+@keyframes slide-out {
+  to { opacity: 0; transform: translateX(100%); }
+}
+@keyframes drawer-in {
+  from { transform: translateX(100%); }
+}
+@keyframes ping-soft {
+  75%, 100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+@keyframes grow-y {
+  from { transform: scaleY(0); }
+}
+@keyframes grow-x {
+  from { transform: scaleX(0); }
+}
+@keyframes countdown {
+  to { transform: scaleX(0); }
+}
+@keyframes flash {
+  0% { opacity: 0; transform: translateY(2px); }
+  15%, 70% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-14deg); }
+  50% { transform: rotate(10deg); }
+  75% { transform: rotate(-6deg); }
+}
+@keyframes bob {
+  0%, 100% { transform: translateY(0); opacity: 0.45; }
+  50% { transform: translateY(-3px); opacity: 1; }
+}
+
 html,
 body,
 #root {
   height: 100%;
 }
 
-body {
-  margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  @apply bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
+/* Em @layer base: fora de camada, estas regras venceriam os utilitários (ex.: outline-none). */
+@layer base {
+  body {
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(161 161 170 / 0.45) transparent;
+  }
+
+  ::selection {
+    @apply bg-blue-500/25;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-blue-500);
+    outline-offset: 2px;
+  }
+}
+
+/* ---------- diálogos nativos (modal e gaveta) ---------- */
+
+dialog {
+  color: inherit;
+}
+dialog::backdrop {
+  background: rgb(9 9 11 / 0.45);
+  backdrop-filter: blur(3px);
+  animation: fade-in 0.25s ease both;
+}
+dialog[data-closing]::backdrop {
+  animation: fade-out 0.18s ease both;
+}
+dialog.modal {
+  margin: auto;
+  max-height: calc(100vh - 4rem);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+dialog.modal[open] {
+  animation: pop 0.28s var(--ease-out-expo) both;
+}
+dialog.modal.top {
+  margin-top: 12vh;
+}
+dialog.modal[data-closing] {
+  animation: sink 0.16s ease-in both;
+}
+dialog.drawer {
+  margin: 0 0 0 auto;
+  height: 100%;
+  max-height: 100%;
+  width: min(440px, 100vw);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+dialog.drawer[open] {
+  animation: drawer-in 0.4s var(--ease-out-expo) both;
+}
+dialog.drawer[data-closing] {
+  animation: slide-out 0.22s ease-in both;
+}
+
+.toast-leave {
+  animation: slide-out 0.22s ease-in both;
+}
+.countdown {
+  transform-origin: left;
+  animation: countdown linear forwards;
+}
+
+/* Troca de tema: cross-fade da página inteira, composto pelo navegador. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.35s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after,
+  ::backdrop,
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

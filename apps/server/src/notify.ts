@@ -24,7 +24,9 @@ function describe(e: OfficeEvent): [string, string] | null {
     if (d.kind === 'question') return [`${who} tem uma pergunta`, p.question];
     return [`${p.from ?? 'Um colega'} quer delegar a ${p.to}`, p.title];
   }
-  if (e.type === 'task.finished' && s.notifyTaskFinished && d.status !== 'cancelled') {
+  // Série recorrente só incomoda quando falha.
+  const repeating = () => !!get<{ r: number | null }>('SELECT repeat_every AS r FROM tasks WHERE id = ?', e.taskId)?.r;
+  if (e.type === 'task.finished' && s.notifyTaskFinished && d.status !== 'cancelled' && !(d.status === 'done' && repeating())) {
     return [`${who}: task #${e.taskId} ${STATUS[d.status] ?? d.status}`, d.result ?? ''];
   }
   return null;

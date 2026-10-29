@@ -7,6 +7,7 @@ import { git } from './git.ts';
 import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, ruleFor } from './policy.ts';
 import { publicProvider } from './providers.ts';
 import { type Run, type RunContext, startRun, summarize } from './runner.ts';
+import { nextRun } from './schedule.ts';
 import { settings } from './settings.ts';
 import { createWorktree, releaseWorktree, removeWorktree, type Worktree, worktreeDir } from './worktree.ts';
 
@@ -37,7 +38,12 @@ export function state() {
       activity: activities.get(e.id) ?? 'idle',
     })),
     providers: all<Provider>('SELECT * FROM providers ORDER BY name').map(publicProvider),
-    tasks: all<Task>('SELECT * FROM tasks ORDER BY id DESC LIMIT 100'),
+    // Das séries, só as execuções vivas e a última encerrada: o histórico completo fica na conversa da série.
+    tasks: all<Task>(
+      `SELECT * FROM tasks t WHERE t.repeat_every IS NULL OR t.status IN ('scheduled', 'queued', 'running')
+         OR t.id = (SELECT MAX(id) FROM tasks WHERE thread_id = t.thread_id AND repeat_every IS NOT NULL AND status IN ('done', 'failed', 'cancelled'))
+       ORDER BY t.id DESC LIMIT 100`,
+    ),
     approvals: all<Approval>(`SELECT * FROM approvals WHERE status = 'pending' ORDER BY id`).map(approvalView),
     settings: settings(),
   };
@@ -440,12 +446,15 @@ type TaskInput = {
   parentTaskId?: number | null;
   resumeSessionId?: string | null;
   runAt?: string | null;
+  repeatEvery?: number | null; // minutos
 };
 
 export function createTask(b: TaskInput) {
   if (!employee(Number(b.employeeId))) throw new HttpError(404, 'funcionário não encontrado');
   const origin = b.origin ?? 'user';
   const needsApproval = origin === 'agent' && settings().delegationNeedsApproval;
+  const every = b.repeatEvery == null || origin !== 'user' ? null : Math.trunc(Number(b.repeatEvery));
+  if (every !== null && !(every >= 1)) throw new HttpError(400, 'repeatEvery deve ser em minutos (≥ 1)');
   let runAt: string | null = null;
   if (b.runAt) {
     const ms = Date.parse(b.runAt);
@@ -453,7 +462,7 @@ export function createTask(b: TaskInput) {
     if (ms > Date.now()) runAt = new Date(ms).toISOString();
   }
   const { lastInsertRowid } = run(
-    'INSERT INTO tasks (employee_id, origin, from_employee_id, parent_task_id, title, body, status, resume_session_id, run_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO tasks (employee_id, origin, from_employee_id, parent_task_id, title, body, status, resume_session_id, run_at, repeat_every) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     Number(b.employeeId),
     origin,
     b.fromEmployeeId ?? null,
@@ -462,7 +471,9 @@ export function createTask(b: TaskInput) {
     b.body ?? '',
     needsApproval ? 'pending_approval' : runAt ? 'scheduled' : 'queued',
     b.resumeSessionId ?? null,
-    runAt,
+    // Série: run_at é a âncora do ritmo, mesmo quando a primeira roda na hora.
+    runAt ?? (every ? now() : null),
+    every,
   );
   // Continuação do mesmo funcionário fica na conversa da origem; o resto abre conversa nova.
   const parent = b.parentTaskId ? get<Task>('SELECT * FROM tasks WHERE id = ?', b.parentTaskId) : undefined;
@@ -474,16 +485,41 @@ export function createTask(b: TaskInput) {
     const from = b.fromEmployeeId ? employee(b.fromEmployeeId)?.name : null;
     createApproval('delegation', t.employee_id, null, { taskId: t.id, from, to: employee(t.employee_id)?.name, title: t.title, body: t.body });
   } else if (!runAt) {
+    if (every) scheduleNext(t);
     pump();
   }
   return t;
+}
+
+const nextRunAt = (t: Task) => new Date(nextRun(Date.parse(t.run_at!), t.repeat_every!, Date.now())).toISOString();
+
+// Cada execução da série, ao entrar na fila, já deixa a próxima agendada: a série sobrevive a um restart
+// e termina quando o chefe cancela a agendada. Mesma conversa, sessão nova (sem parent).
+function scheduleNext(t: Task) {
+  const { lastInsertRowid } = run(
+    `INSERT INTO tasks (employee_id, origin, title, body, status, run_at, repeat_every, thread_id) VALUES (?, 'user', ?, ?, 'scheduled', ?, ?, ?)`,
+    t.employee_id,
+    t.title,
+    t.body,
+    nextRunAt(t),
+    t.repeat_every,
+    t.thread_id,
+  );
+  const next = get<Task>('SELECT * FROM tasks WHERE id = ?', lastInsertRowid)!;
+  publish('task.created', next, taskIds(next));
 }
 
 // Tasks agendadas entram na fila quando chega a hora.
 export function releaseScheduled() {
   const due = all<Task>(`SELECT * FROM tasks WHERE status = 'scheduled' AND run_at <= ?`, now());
   for (const t of due) {
-    run(`UPDATE tasks SET status = 'queued' WHERE id = ?`, t.id);
+    // Série com execução ainda esperando na fila: pula este horário em vez de empilhar.
+    if (t.repeat_every && get(`SELECT 1 FROM tasks WHERE thread_id = ? AND status = 'queued'`, t.thread_id)) {
+      run('UPDATE tasks SET run_at = ? WHERE id = ?', nextRunAt(t), t.id);
+    } else {
+      run(`UPDATE tasks SET status = 'queued' WHERE id = ?`, t.id);
+      if (t.repeat_every) scheduleNext(t);
+    }
     publish('state.changed');
   }
   if (due.length) pump();

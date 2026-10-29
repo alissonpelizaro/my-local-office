@@ -13,8 +13,8 @@ export const ACTIVITY: Record<Activity, { label: string; icon: string }> = {
   onboarding: { label: 'onboarding', icon: '🧭' },
 };
 
-export const STATUS: Record<TaskStatus, { label: string; tone: 'default' | 'red' | 'green' | 'blue' | 'amber' }> = {
-  scheduled: { label: 'agendada', tone: 'amber' },
+export const STATUS: Record<TaskStatus, { label: string; tone: 'default' | 'red' | 'green' | 'blue' | 'amber' | 'violet' }> = {
+  scheduled: { label: 'agendada', tone: 'violet' },
   pending_approval: { label: 'aguardando aprovação', tone: 'amber' },
   queued: { label: 'na fila', tone: 'default' },
   running: { label: 'executando', tone: 'blue' },
@@ -25,7 +25,50 @@ export const STATUS: Record<TaskStatus, { label: string; tone: 'default' | 'red'
 
 export const money = (v: number) => `US$ ${v.toFixed(v < 1 ? 3 : 2)}`;
 export const time = (ts: string) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+export const clock = (ts: string | number) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 export const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+export function ago(ts: string) {
+  const m = Math.round((Date.now() - Date.parse(ts)) / 60_000);
+  if (m < 1) return 'agora';
+  if (m < 60) return `há ${m} min`;
+  if (m < 48 * 60) return `há ${Math.round(m / 60)} h`;
+  return new Date(ts).toLocaleDateString('pt-BR');
+}
+
+export function until(ts: string | number) {
+  const m = Math.ceil((new Date(ts).getTime() - Date.now()) / 60_000);
+  if (m <= 0) return 'agora';
+  if (m < 60) return `em ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `em ${h} h${m % 60 ? ` ${m % 60} min` : ''}`;
+  return `em ${Math.round(h / 24)} dia${h >= 36 ? 's' : ''}`;
+}
+
+// "hoje 14:30", "amanhã 09:00", "sex 09:00", "03/11 09:00"
+export function when(ts: string | number) {
+  const d = new Date(ts);
+  const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+  const day = days === 0 ? 'hoje' : days === 1 ? 'amanhã' : days > 1 && days < 7 ? d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '') : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  return `${day} ${clock(d.getTime())}`;
+}
+
+export function everyLabel(min: number) {
+  if (min % 1440 === 0) return min === 1440 ? 'todo dia' : `a cada ${min / 1440} dias`;
+  if (min % 60 === 0) return min === 60 ? 'a cada hora' : `a cada ${min / 60} h`;
+  return `a cada ${min} min`;
+}
+
+// dta-base → DB, monnif → MO
+export function initials(name: string) {
+  const parts = name.split(/[-_.\s]+/).filter(Boolean);
+  return (parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2)).toUpperCase();
+}
+
+// Primeira linha do texto vira o título, como no chat.
+export const titleOf = (text: string) => truncate(text.trim().split('\n')[0], 80);
+
+export const WORKING = new Set<Activity>(['thinking', 'reading', 'typing', 'running', 'talking', 'consulting', 'delegating', 'onboarding']);
 
 export function names(state: OfficeState) {
   const byId = new Map(state.employees.map((e) => [e.id, e.name]));
@@ -47,6 +90,8 @@ export function describe(e: OfficeEvent): { icon: string; text: string } | null 
     case 'agent.text':
       return { icon: d.kind === 'consult' ? '🔎' : '💭', text: d.text };
     case 'agent.tool':
+      if (d.name === 'TodoWrite' && Array.isArray(d.todos))
+        return { icon: '📋', text: `plano: ${d.todos.filter((t: { status: string }) => t.status === 'completed').length}/${d.todos.length} feito(s)` };
       return { icon: '🛠️', text: `${d.name.replace(/^mcp__office__/, 'office.')} ${d.summary}` };
     case 'agent.error':
       return { icon: '💥', text: d.message };
