@@ -6,7 +6,7 @@ import { all, type Approval, type Department, type Employee, get, type Provider,
 import { git } from './git.ts';
 import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, ruleFor } from './policy.ts';
 import { publicProvider } from './providers.ts';
-import { EFFORTS, type Run, type RunContext, startRun, summarize } from './runner.ts';
+import { EFFORTS, type Run, type RunContext, runByToken, startRun, summarize } from './runner.ts';
 import { nextRun } from './schedule.ts';
 import { settings } from './settings.ts';
 import { createWorktree, releaseWorktree, removeWorktree, type Worktree, worktreeDir } from './worktree.ts';
@@ -273,10 +273,13 @@ function createApproval(kind: Approval['kind'], employeeId: number, taskId: numb
   return a;
 }
 
-function waitApproval(kind: Approval['kind'], employeeId: number, taskId: number | null, payload: object) {
-  const a = createApproval(kind, employeeId, taskId, payload);
-  setActivity(employeeId, 'waiting', kind);
-  return new Promise<Decision>((resolve) => waiters.set(a.id, resolve));
+async function waitApproval(ctx: RunContext, kind: Approval['kind'], payload: object) {
+  const a = createApproval(kind, ctx.employee.id, ctx.taskId, payload);
+  setActivity(ctx.employee.id, 'waiting', kind);
+  const d = await new Promise<Decision>((resolve) => waiters.set(a.id, resolve));
+  // Aprovação expirada no fim da task acorda aqui com o run já encerrado: não volta a "pensando".
+  if (runByToken(ctx.token)) setActivity(ctx.employee.id, 'thinking');
+  return d;
 }
 
 export function resolveApproval(id: number, decision: 'allow' | 'deny' | 'always' | 'answer', text?: string, rawAnswers?: unknown) {
@@ -334,12 +337,11 @@ async function askUserQuestion(ctx: RunContext, input: any) {
     ? input.questions
     : [];
   if (!questions.length) return deny('Pergunta sem conteúdo.');
-  const d = await waitApproval('question', ctx.employee.id, ctx.taskId, {
+  const d = await waitApproval(ctx, 'question', {
     question: questions.map((q) => q.question).join('\n'),
     options: questions.length === 1 && !questions[0].multiSelect ? (questions[0].options ?? []).map((o) => o.label) : [],
     questions,
   });
-  setActivity(ctx.employee.id, 'thinking');
   if (d.status !== 'answered') return deny(d.answer || (d.status === 'expired' ? 'A pergunta expirou.' : 'O chefe preferiu responder pela conversa; aguarde a próxima mensagem dele.'));
   return allow({ ...input, answers: d.answers ?? { [questions[0].question]: d.answer } });
 }
@@ -369,7 +371,7 @@ export async function approveTool(ctx: RunContext, name: string, input: any) {
   if (!external && allowedByRule(JSON.parse(e.allow_rules), name, input)) return allow(input);
   if (!external && EDIT_TOOLS.has(name) && inRepo && e.auto_edit) return allow(input);
 
-  const d = await waitApproval('tool', e.id, ctx.taskId, {
+  const d = await waitApproval(ctx, 'tool', {
     tool: name,
     input,
     summary: summarize(input),
@@ -378,7 +380,6 @@ export async function approveTool(ctx: RunContext, name: string, input: any) {
     outsideRepo: EDIT_TOOLS.has(name) && !inRepo,
     rule: ruleFor(name, input),
   });
-  setActivity(e.id, 'thinking');
   return d.status === 'allowed' ? allow(input) : deny(d.answer || (d.status === 'expired' ? 'Expirou.' : 'Negado pelo chefe.'));
 }
 
@@ -462,8 +463,7 @@ export function delegateTask(ctx: RunContext, to: string, title: string, descrip
 
 export async function askBoss(ctx: RunContext, question: string, options?: string[]) {
   if (ctx.kind !== 'task') throw new Error('Indisponível em consulta.');
-  const d = await waitApproval('question', ctx.employee.id, ctx.taskId, { question: required(question, 'question'), options: options ?? [] });
-  setActivity(ctx.employee.id, 'thinking');
+  const d = await waitApproval(ctx, 'question', { question: required(question, 'question'), options: options ?? [] });
   if (d.status === 'denied') return 'O chefe preferiu responder pela conversa; aguarde a próxima mensagem dele.';
   return d.answer ?? 'O chefe não respondeu (pergunta expirou).';
 }
