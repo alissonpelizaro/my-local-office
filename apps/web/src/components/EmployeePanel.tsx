@@ -86,7 +86,7 @@ function HistoryView({ employeeId }: { employeeId: number }) {
                 <button title="Detalhes" className="rounded p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" onClick={() => openTask(t.id)}>
                   <Icon name="external" className="h-3.5 w-3.5" />
                 </button>
-                {!['scheduled', 'queued', 'pending_approval'].includes(t.status) && (
+                {!['scheduled', 'paused', 'queued', 'pending_approval'].includes(t.status) && (
                   <button title="Assistir no escritório" className="rounded p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" onClick={() => startReplay(t.id)}>
                     <Icon name="play" className="h-3.5 w-3.5" />
                   </button>

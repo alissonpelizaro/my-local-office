@@ -159,7 +159,7 @@ export type Employee = {
   profile_source: 'auto' | 'manual';
   profile_commit: string | null;
 };
-export type TaskStatus = 'scheduled' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'scheduled' | 'paused' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type Task = {
   id: number;
   employee_id: number;

@@ -116,6 +116,7 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/tasks\/(\d+)\/message$/, (b, [id]) => office.messageTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/followup$/, (b, [id]) => office.followupTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/stop$/, (_, [id]) => office.stopTask(Number(id))],
+  ['POST', /^\/api\/tasks\/(\d+)\/(pause|resume)$/, (_, [id, action]) => office.pauseTask(Number(id), action === 'pause')],
   ['DELETE', /^\/api\/tasks\/(\d+)\/worktree$/, (_, [id]) => office.removeTaskWorktree(Number(id))],
   ['GET', /^\/api\/costs$/, (_, __, url) => office.costs(Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30)))],
   ['POST', /^\/api\/approvals\/(\d+)$/, (b, [id]) => office.resolveApproval(Number(id), b.decision, b.text, b.answers)],

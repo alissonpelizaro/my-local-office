@@ -32,7 +32,7 @@ export type Provider = {
   has_key: boolean;
 };
 
-export type TaskStatus = 'scheduled' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'scheduled' | 'paused' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export type Task = {
   id: number;

@@ -5,6 +5,7 @@ import type { Approval, Employee, OfficeEvent, Task, Thread, ThreadDetail } from
 import { ApprovalCard, QuestionCard } from './ApprovalCard';
 import { Icon } from './icons';
 import { Markdown } from './Markdown';
+import { PauseButton } from './TasksTab';
 import { Button, Chip, cx, Skeleton, Spinner } from './ui';
 
 type Todo = { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string };
@@ -186,7 +187,7 @@ export function ChatView({ employee }: { employee: Employee }) {
   }, [detail, live, state.tasks]);
 
   const rows = useMemo(() => buildRows(events, employee.id, name), [events, employee.id, name]);
-  const series = current.find((t) => t.status === 'scheduled' && t.repeat_every);
+  const series = current.find((t) => (t.status === 'scheduled' || t.status === 'paused') && t.repeat_every);
   const running = current.find((t) => t.status === 'running');
   const queued = current.find((t) => t.status === 'scheduled' || t.status === 'queued' || t.status === 'pending_approval');
   const cost = tasks.reduce((s, t) => s + t.cost_usd, 0);
@@ -205,7 +206,7 @@ export function ChatView({ employee }: { employee: Employee }) {
   // Linhas que já existiam ao abrir a conversa entram sem animação; só as novas deslizam.
   const seen = useRef<{ thread: number; keys: Set<string> } | null>(null);
   if (detail && seen.current?.thread !== detail.id) seen.current = { thread: detail.id, keys: new Set(rows.map((r) => r.key)) };
-  const lastRun = tasks.findLast((t) => t.status !== 'scheduled' && t.status !== 'queued');
+  const lastRun = tasks.findLast((t) => t.status !== 'scheduled' && t.status !== 'paused' && t.status !== 'queued');
 
   const send = async (text: string) => {
     stick.current = true;
@@ -249,7 +250,11 @@ export function ChatView({ employee }: { employee: Employee }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium">{target?.kind === 'thread' ? (detail?.title ?? '…') : target?.kind === 'native' ? `↪ ${target.title}` : 'Nova conversa'}</span>
-            {series && <Chip tone="violet" icon="repeat">{everyLabel(series.repeat_every!)}</Chip>}
+            {series && (
+              <Chip tone={series.status === 'paused' ? 'amber' : 'violet'} icon={series.status === 'paused' ? 'pause' : 'repeat'}>
+                {everyLabel(series.repeat_every!)}
+              </Chip>
+            )}
           </div>
           {target?.kind === 'thread' && (
             <div className="flex items-center gap-1.5 text-xs text-zinc-500">
@@ -258,6 +263,7 @@ export function ChatView({ employee }: { employee: Employee }) {
             </div>
           )}
         </div>
+        {series && <PauseButton task={series} compact />}
         {target?.kind === 'thread' && lastRun && (
           <Button variant="ghost" size="icon" icon="play" title="Assistir o último turno no escritório" onClick={() => startReplay(lastRun.id)} />
         )}
@@ -300,7 +306,8 @@ export function ChatView({ employee }: { employee: Employee }) {
         )}
         {series && (
           <p className="mb-3 flex items-center gap-2 rounded-lg bg-violet-50 p-2 text-xs text-violet-800 dark:bg-violet-950/40 dark:text-violet-200">
-            <Icon name="repeat" className="h-3.5 w-3.5" /> Série {everyLabel(series.repeat_every!)} · próxima {when(series.run_at!)}. Cada execução aparece como um turno abaixo.
+            <Icon name="repeat" className="h-3.5 w-3.5" /> Série {everyLabel(series.repeat_every!)} ·{' '}
+            {series.status === 'paused' ? 'pausada' : `próxima ${when(series.run_at!)}`}. Cada execução aparece como um turno abaixo.
           </p>
         )}
         {detail && detail.hiddenTurns > 0 && (

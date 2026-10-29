@@ -11,7 +11,7 @@ import { Button, Chip, ConfirmButton, cx, Empty, Input, Modal, Segmented, Status
 
 const VIEWS: { id: TaskView; label: string; statuses: Task['status'][] }[] = [
   { id: 'active', label: 'Ativas', statuses: ['running', 'queued', 'pending_approval'] },
-  { id: 'planned', label: 'Planejadas', statuses: ['scheduled'] },
+  { id: 'planned', label: 'Planejadas', statuses: ['scheduled', 'paused'] },
   { id: 'history', label: 'Histórico', statuses: ['done', 'failed', 'cancelled'] },
 ];
 
@@ -145,7 +145,7 @@ function TaskDetail({ taskId }: { taskId: number }) {
   const hint = nextScheduleHint(t);
   // Série: o que interessa é como foi a última execução (o estado vem em ordem decrescente de id).
   const lastRun = t.repeat_every ? state.tasks.find((x) => x.thread_id === t.thread_id && x.id !== t.id && ['done', 'failed'].includes(x.status)) : undefined;
-  const ran = !['scheduled', 'queued', 'pending_approval'].includes(t.status);
+  const ran = !['scheduled', 'paused', 'queued', 'pending_approval'].includes(t.status);
 
   return (
     <div className="grid gap-5 p-5">
@@ -215,7 +215,8 @@ function TaskDetail({ taskId }: { taskId: number }) {
           {t.repeat_every ? 'Ver execuções' : 'Abrir conversa'}
         </Button>
         {ran && events.length > 0 && <Button icon="play" onClick={() => startReplay(t.id)}>Assistir</Button>}
-        {(t.status === 'running' || t.status === 'scheduled' || t.status === 'queued' || t.status === 'pending_approval') && (
+        {t.repeat_every && (t.status === 'scheduled' || t.status === 'paused') && <PauseButton task={t} />}
+        {(t.status === 'running' || t.status === 'scheduled' || t.status === 'paused' || t.status === 'queued' || t.status === 'pending_approval') && (
           <ConfirmButton
             icon={t.status === 'running' ? 'stop' : 'x'}
             confirm={t.repeat_every ? 'Encerrar série?' : 'Confirmar?'}
@@ -254,6 +255,21 @@ function TaskDetail({ taskId }: { taskId: number }) {
         <EventLog events={events} className="max-h-[50vh]" />
       </div>
     </div>
+  );
+}
+
+export function PauseButton({ task, compact }: { task: Task; compact?: boolean }) {
+  const paused = task.status === 'paused';
+  return (
+    <Button
+      variant={compact ? 'ghost' : undefined}
+      size={compact ? 'sm' : undefined}
+      icon={paused ? 'play' : 'pause'}
+      onClick={() => act(() => api('POST', `/api/tasks/${task.id}/${paused ? 'resume' : 'pause'}`))}
+    >
+      {paused ? 'Retomar' : 'Pausar'}
+      {!compact && ' série'}
+    </Button>
   );
 }
 
