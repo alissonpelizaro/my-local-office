@@ -6,6 +6,9 @@ const DEFAULTS = {
   delegationNeedsApproval: process.env.OFFICE_DELEGATION_APPROVAL !== '0',
   defaultModel: 'sonnet',
   onboardModel: 'haiku',
+  consultModel: 'sonnet', // consultas entre colegas são só leitura; '' usa o modelo do colega
+  defaultEffort: '', // low | medium | high | xhigh | max; '' deixa o Claude Code decidir
+  compactWindow: 200_000, // tokens: a conversa é compactada antes de passar disso; 0 deixa o Claude Code decidir
   importRoot: '~/webprojects',
   notifyApprovals: true,
   notifyTaskFinished: true,

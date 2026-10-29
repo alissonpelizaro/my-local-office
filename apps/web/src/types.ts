@@ -12,6 +12,7 @@ export type Employee = {
   profile: string;
   provider_id: number | null;
   model: string | null;
+  effort: string | null;
   auto_edit: number;
   allow_rules: string[];
   isolation: 'repo' | 'worktree';
@@ -27,6 +28,7 @@ export type Provider = {
   base_url: string;
   model: string;
   small_model: string | null;
+  context_window: number | null;
   has_key: boolean;
 };
 
@@ -93,6 +95,9 @@ export type Settings = {
   delegationNeedsApproval: boolean;
   defaultModel: string;
   onboardModel: string;
+  consultModel: string;
+  defaultEffort: string;
+  compactWindow: number;
   importRoot: string;
   notifyApprovals: boolean;
   notifyTaskFinished: boolean;

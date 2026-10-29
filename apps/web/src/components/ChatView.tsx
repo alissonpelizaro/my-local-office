@@ -102,6 +102,11 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
           tools.push(e);
         }
         break;
+      case 'agent.compact':
+        if (!mine || d.kind !== 'task') break;
+        flush();
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: '🗜️', text: `Conversa compactada${d.preTokens ? ` (tinha ${Math.round(d.preTokens / 1000)}K tokens)` : ''}` });
+        break;
       case 'colleague.ask':
         flush();
         rows.push({ kind: 'note', key: `n${e.id}`, icon: '🤝', text: `Perguntou a ${d.to}`, detail: d.question });

@@ -95,6 +95,7 @@ const routes: [string, RegExp, Handler][] = [
   ['PATCH', /^\/api\/departments\/(\d+)$/, (b, [id]) => office.updateDepartment(Number(id), b)],
   ['DELETE', /^\/api\/departments\/(\d+)$/, (_, [id]) => office.deleteDepartment(Number(id))],
   ['POST', /^\/api\/providers$/, (b) => office.saveProvider(b)],
+  ['POST', /^\/api\/providers\/models$/, (b) => office.providerModels(b)],
   ['PATCH', /^\/api\/providers\/(\d+)$/, (b, [id]) => office.saveProvider({ ...b, id: Number(id) })],
   ['DELETE', /^\/api\/providers\/(\d+)$/, (_, [id]) => office.deleteProvider(Number(id))],
   ['GET', /^\/api\/discover$/, (_, __, url) => discover(url.searchParams.get('root') || settings().importRoot)],

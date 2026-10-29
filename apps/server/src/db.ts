@@ -114,6 +114,8 @@ addColumn('tasks', 'cwd', 'TEXT'); // pasta onde o turno rodou: a sessão do Cla
 addColumn('tasks', 'run_at', 'TEXT'); // agendada: só entra na fila a partir deste instante (ISO UTC)
 addColumn('tasks', 'repeat_every', 'INTEGER'); // minutos; a série inteira divide a mesma conversa
 addColumn('usage', 'session_id', 'TEXT');
+addColumn('employees', 'effort', 'TEXT');
+addColumn('providers', 'context_window', 'INTEGER'); // tokens que o modelo aguenta (ex. num_ctx do Ollama)
 db.exec('CREATE INDEX IF NOT EXISTS tasks_thread ON tasks (thread_id)');
 
 // Tasks anteriores às conversas: continuação do mesmo funcionário herda a conversa da origem.
@@ -138,6 +140,7 @@ export type Provider = {
   api_key: string;
   model: string;
   small_model: string | null;
+  context_window: number | null;
 };
 export type Employee = {
   id: number;
@@ -148,6 +151,7 @@ export type Employee = {
   profile: string;
   provider_id: number | null;
   model: string | null;
+  effort: string | null;
   auto_edit: number;
   allow_rules: string;
   isolation: 'repo' | 'worktree';

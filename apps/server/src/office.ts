@@ -6,7 +6,7 @@ import { all, type Approval, type Department, type Employee, get, type Provider,
 import { git } from './git.ts';
 import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, ruleFor } from './policy.ts';
 import { publicProvider } from './providers.ts';
-import { type Run, type RunContext, startRun, summarize } from './runner.ts';
+import { EFFORTS, type Run, type RunContext, startRun, summarize } from './runner.ts';
 import { nextRun } from './schedule.ts';
 import { settings } from './settings.ts';
 import { createWorktree, releaseWorktree, removeWorktree, type Worktree, worktreeDir } from './worktree.ts';
@@ -83,19 +83,41 @@ export function deleteDepartment(id: number) {
   publish('state.changed');
 }
 
-export function saveProvider(b: { id?: number; name?: string; format?: string; baseUrl?: string; apiKey?: string; model?: string; smallModel?: string }) {
+type ProviderInput = { id?: number; name?: string; format?: string; baseUrl?: string; apiKey?: string; model?: string; smallModel?: string; contextWindow?: number | string };
+
+export function saveProvider(b: ProviderInput) {
   if (b.format !== 'anthropic' && b.format !== 'openai') throw new HttpError(400, 'format deve ser anthropic ou openai');
-  const fields = [required(b.name, 'name'), b.format, required(b.baseUrl, 'baseUrl').replace(/\/+$/, ''), required(b.model, 'model'), b.smallModel?.trim() || null];
+  const window = Math.trunc(Number(b.contextWindow)) || null;
+  const fields = [required(b.name, 'name'), b.format, required(b.baseUrl, 'baseUrl').replace(/\/+$/, ''), required(b.model, 'model'), b.smallModel?.trim() || null, window];
   let id = b.id;
   if (id) {
-    run('UPDATE providers SET name = ?, format = ?, base_url = ?, model = ?, small_model = ? WHERE id = ?', ...fields, id);
+    run('UPDATE providers SET name = ?, format = ?, base_url = ?, model = ?, small_model = ?, context_window = ? WHERE id = ?', ...fields, id);
   } else {
-    id = Number(run('INSERT INTO providers (name, format, base_url, model, small_model) VALUES (?, ?, ?, ?, ?)', ...fields).lastInsertRowid);
+    id = Number(run('INSERT INTO providers (name, format, base_url, model, small_model, context_window) VALUES (?, ?, ?, ?, ?, ?)', ...fields).lastInsertRowid);
   }
   // Campo vazio mantém a chave salva; ela nunca volta para a UI.
   if (b.apiKey?.trim()) run('UPDATE providers SET api_key = ? WHERE id = ?', b.apiKey.trim(), id);
   publish('state.changed');
   return publicProvider(get<Provider>('SELECT * FROM providers WHERE id = ?', id)!);
+}
+
+// Modelos que o provedor anuncia (OpenAI em /models; Anthropic, LiteLLM e Ollama em /v1/models), para sugerir no cadastro.
+export async function providerModels(b: ProviderInput) {
+  const base = required(b.baseUrl, 'baseUrl').replace(/\/+$/, '');
+  const url = `${base}${b.format === 'openai' ? '' : '/v1'}/models`;
+  // Na edição a chave vazia é a salva, que nunca vem da UI.
+  const key = b.apiKey?.trim() || (b.id ? get<Provider>('SELECT api_key FROM providers WHERE id = ?', b.id)?.api_key : '') || '';
+  try {
+    const r = await fetch(url, {
+      headers: { 'anthropic-version': '2023-06-01', ...(key && { authorization: `Bearer ${key}`, 'x-api-key': key }) },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const { data } = (await r.json()) as { data?: { id: string }[] };
+    return (data ?? []).map((m) => m.id).sort();
+  } catch (e) {
+    throw new HttpError(502, `${url}: ${(e as Error).message}`);
+  }
 }
 
 export function deleteProvider(id: number) {
@@ -109,6 +131,7 @@ type EmployeeInput = {
   repoPath?: string;
   providerId?: number | null;
   model?: string | null;
+  effort?: string | null;
   autoEdit?: boolean;
   profile?: string;
   allowRules?: string[];
@@ -153,14 +176,16 @@ export function updateEmployee(id: number, b: EmployeeInput) {
   const e = employee(id);
   if (!e) throw new HttpError(404, 'funcionário não encontrado');
   if (b.isolation !== undefined && b.isolation !== 'repo' && b.isolation !== 'worktree') throw new HttpError(400, 'isolation deve ser repo ou worktree');
+  if (b.effort && !EFFORTS.includes(b.effort)) throw new HttpError(400, `effort deve ser ${EFFORTS.join(', ')} ou vazio`);
   // Ficha editada à mão deixa de ser refeita automaticamente.
   const manual = b.profile !== undefined && b.profile !== e.profile;
   run(
-    'UPDATE employees SET department_id = ?, name = ?, provider_id = ?, model = ?, auto_edit = ?, profile = ?, profile_source = ?, allow_rules = ?, isolation = ?, max_parallel = ? WHERE id = ?',
+    'UPDATE employees SET department_id = ?, name = ?, provider_id = ?, model = ?, effort = ?, auto_edit = ?, profile = ?, profile_source = ?, allow_rules = ?, isolation = ?, max_parallel = ? WHERE id = ?',
     b.departmentId ?? e.department_id,
     b.name?.trim() || e.name,
     b.providerId === undefined ? e.provider_id : b.providerId,
     b.model === undefined ? e.model : b.model || null,
+    b.effort === undefined ? e.effort : b.effort || null,
     b.autoEdit === undefined ? e.auto_edit : b.autoEdit ? 1 : 0,
     b.profile ?? e.profile,
     manual ? 'manual' : e.profile_source,
@@ -219,6 +244,7 @@ async function runOnboard(id: number) {
     systemPrompt: 'Você está fazendo o onboarding deste repositório no My Local Office. Somente leitura.',
     tools: ['Read', 'Grep', 'Glob'],
     model: settings().onboardModel,
+    effort: '',
     depth: MAX_CONSULT_DEPTH,
   });
   const res = await r.done;
@@ -386,6 +412,7 @@ export async function askColleague(ctx: RunContext, to: string, question: string
     depth: ctx.depth + 1,
     chain: [...ctx.chain, ctx.employee.id],
     tools: ['Read', 'Grep', 'Glob'],
+    model: settings().consultModel || undefined,
     prompt: `Pergunta de ${ctx.employee.name}:\n\n${question}`,
     systemPrompt: [
       `Você é "${target.name}", responsável pelo repositório ${target.repo_path} no My Local Office.`,
