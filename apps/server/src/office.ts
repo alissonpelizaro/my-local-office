@@ -1,7 +1,8 @@
+import { exec } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { activities, publish, setActivity } from './bus.ts';
-import { CONSULT_TIMEOUT_MS, MAX_CONSULT_DEPTH } from './config.ts';
+import { CONSULT_TIMEOUT_MS, MAX_CONSULT_DEPTH, PRECHECK_TIMEOUT_MS } from './config.ts';
 import { all, type Approval, type Department, type Employee, get, type Provider, run, type Task } from './db.ts';
 import { git } from './git.ts';
 import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, ruleFor } from './policy.ts';
@@ -137,6 +138,7 @@ type EmployeeInput = {
   allowRules?: string[];
   isolation?: Employee['isolation'];
   maxParallel?: number;
+  connectors?: boolean;
 };
 
 export function createEmployee(b: EmployeeInput) {
@@ -180,7 +182,7 @@ export function updateEmployee(id: number, b: EmployeeInput) {
   // Ficha editada à mão deixa de ser refeita automaticamente.
   const manual = b.profile !== undefined && b.profile !== e.profile;
   run(
-    'UPDATE employees SET department_id = ?, name = ?, provider_id = ?, model = ?, effort = ?, auto_edit = ?, profile = ?, profile_source = ?, allow_rules = ?, isolation = ?, max_parallel = ? WHERE id = ?',
+    'UPDATE employees SET department_id = ?, name = ?, provider_id = ?, model = ?, effort = ?, auto_edit = ?, profile = ?, profile_source = ?, allow_rules = ?, isolation = ?, max_parallel = ?, connectors = ? WHERE id = ?',
     b.departmentId ?? e.department_id,
     b.name?.trim() || e.name,
     b.providerId === undefined ? e.provider_id : b.providerId,
@@ -192,6 +194,7 @@ export function updateEmployee(id: number, b: EmployeeInput) {
     b.allowRules ? JSON.stringify(b.allowRules) : e.allow_rules,
     b.isolation ?? e.isolation,
     b.maxParallel === undefined ? e.max_parallel : Math.min(5, Math.max(1, Math.trunc(b.maxParallel))),
+    b.connectors === undefined ? e.connectors : b.connectors ? 1 : 0,
     id,
   );
   pump();
@@ -417,6 +420,7 @@ export async function askColleague(ctx: RunContext, to: string, question: string
     chain: [...ctx.chain, ctx.employee.id],
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
     model: settings().consultModel || undefined,
+    effort: 'low', // consulta é busca de leitura; sem isso herdaria o esforço padrão do escritório
     prompt: `Pergunta de ${ctx.employee.name}:\n\n${question}`,
     systemPrompt: [
       `Você é "${target.name}", responsável pelo repositório ${target.repo_path} no My Local Office.`,
@@ -484,6 +488,7 @@ type TaskInput = {
   resumeSessionId?: string | null;
   runAt?: string | null;
   repeatEvery?: number | null; // minutos
+  precheck?: string | null;
 };
 
 export function createTask(b: TaskInput) {
@@ -499,7 +504,7 @@ export function createTask(b: TaskInput) {
     if (ms > Date.now()) runAt = new Date(ms).toISOString();
   }
   const { lastInsertRowid } = run(
-    'INSERT INTO tasks (employee_id, origin, from_employee_id, parent_task_id, title, body, status, resume_session_id, run_at, repeat_every) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO tasks (employee_id, origin, from_employee_id, parent_task_id, title, body, status, resume_session_id, run_at, repeat_every, precheck) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     Number(b.employeeId),
     origin,
     b.fromEmployeeId ?? null,
@@ -511,6 +516,8 @@ export function createTask(b: TaskInput) {
     // Série: run_at é a âncora do ritmo, mesmo quando a primeira roda na hora.
     runAt ?? (every ? now() : null),
     every,
+    // Comando de shell: só o chefe define, nunca um agente via delegate_task.
+    origin === 'user' ? b.precheck?.trim() || null : null,
   );
   // Continuação do mesmo funcionário fica na conversa da origem; o resto abre conversa nova.
   const parent = b.parentTaskId ? get<Task>('SELECT * FROM tasks WHERE id = ?', b.parentTaskId) : undefined;
@@ -534,13 +541,14 @@ const nextRunAt = (t: Task) => new Date(nextRun(Date.parse(t.run_at!), t.repeat_
 // e termina quando o chefe cancela a agendada. Mesma conversa, sessão nova (sem parent).
 function scheduleNext(t: Task) {
   const { lastInsertRowid } = run(
-    `INSERT INTO tasks (employee_id, origin, title, body, status, run_at, repeat_every, thread_id) VALUES (?, 'user', ?, ?, 'scheduled', ?, ?, ?)`,
+    `INSERT INTO tasks (employee_id, origin, title, body, status, run_at, repeat_every, thread_id, precheck) VALUES (?, 'user', ?, ?, 'scheduled', ?, ?, ?, ?)`,
     t.employee_id,
     t.title,
     t.body,
     nextRunAt(t),
     t.repeat_every,
     t.thread_id,
+    t.precheck,
   );
   const next = get<Task>('SELECT * FROM tasks WHERE id = ?', lastInsertRowid)!;
   publish('task.created', next, taskIds(next));
@@ -638,12 +646,39 @@ function pump() {
   for (const t of all<Task>(`SELECT * FROM tasks WHERE status = 'queued' ORDER BY id`)) {
     if (active.size >= maxConcurrent) return;
     const e = employee(t.employee_id);
-    if (!e) continue;
+    if (!e || checking.has(t.id)) continue;
     const mine = [...active.values()].filter((r) => r.ctx.employee.id === e.id);
     if (mine.length >= Math.max(1, e.max_parallel)) continue;
+    if (t.precheck) {
+      precheck(t, e);
+      continue;
+    }
     const ws = pickWorkspace(t, e, new Set(mine.map((r) => r.ctx.cwd)));
     if (ws) startTask(t, e, ws);
   }
+}
+
+// Pré-checagem: comando que decide se a task precisa do agente. Sem saída, encerra sem gastar tokens;
+// com saída, ela vai no prompt. Código de saída diferente de 0 é falha (e notifica, mesmo em série).
+const checking = new Set<number>();
+
+function precheck(t: Task, e: Employee) {
+  checking.add(t.id);
+  exec(t.precheck!, { cwd: e.repo_path, timeout: PRECHECK_TIMEOUT_MS, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+    checking.delete(t.id);
+    const out = stdout.trim();
+    if (out && !err) {
+      run('UPDATE tasks SET body = ?, precheck = NULL WHERE id = ?', `${t.body}\n\nSaída de \`${t.precheck}\`:\n\`\`\`\n${out.slice(0, 20_000)}\n\`\`\``, t.id);
+    } else {
+      const status = err ? 'failed' : 'done';
+      const result = err ? `Pré-checagem falhou: ${(stderr.trim() || err.message).slice(0, 2000)}` : 'Pré-checagem sem saída: nada a fazer.';
+      // Cancelada enquanto o comando rodava continua cancelada.
+      if (run(`UPDATE tasks SET status = ?, result = ?, finished_at = ? WHERE id = ? AND status = 'queued'`, status, result, now(), t.id).changes) {
+        publish('task.finished', { status, result, costUsd: 0 }, taskIds(t));
+      }
+    }
+    pump();
+  });
 }
 
 function startTask(t: Task, e: Employee, ws: Workspace) {

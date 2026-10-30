@@ -116,6 +116,8 @@ addColumn('tasks', 'repeat_every', 'INTEGER'); // minutos; a série inteira divi
 addColumn('usage', 'session_id', 'TEXT');
 addColumn('employees', 'effort', 'TEXT');
 addColumn('providers', 'context_window', 'INTEGER'); // tokens que o modelo aguenta (ex. num_ctx do Ollama)
+addColumn('employees', 'connectors', 'INTEGER NOT NULL DEFAULT 0'); // carrega conectores claude.ai e MCPs do usuário/projeto nas tasks
+addColumn('tasks', 'precheck', 'TEXT'); // comando que decide se a task precisa do agente (vazio = nada a fazer)
 db.exec('CREATE INDEX IF NOT EXISTS tasks_thread ON tasks (thread_id)');
 
 // Tasks anteriores às conversas: continuação do mesmo funcionário herda a conversa da origem.
@@ -158,6 +160,7 @@ export type Employee = {
   max_parallel: number;
   profile_source: 'auto' | 'manual';
   profile_commit: string | null;
+  connectors: number;
 };
 export type TaskStatus = 'scheduled' | 'paused' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type Task = {
@@ -181,6 +184,7 @@ export type Task = {
   cwd: string | null;
   run_at: string | null;
   repeat_every: number | null;
+  precheck: string | null;
 };
 export type Approval = {
   id: number;

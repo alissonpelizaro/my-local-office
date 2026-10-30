@@ -94,6 +94,8 @@ export function startRun(o: StartRun): Run {
     '--output-format', 'stream-json',
     '--verbose',
     '--mcp-config', JSON.stringify(mcp),
+    // Conectores claude.ai e MCPs do usuário/projeto somam ~50K tokens de tools a cada chamada: só em task, e só se o funcionário pedir.
+    ...(o.kind === 'task' && o.employee.connectors ? [] : ['--strict-mcp-config']),
     '--permission-prompt-tool', 'mcp__office__approve',
     '--allowedTools', OFFICE_TOOLS.join(','),
     '--append-system-prompt', o.systemPrompt,
