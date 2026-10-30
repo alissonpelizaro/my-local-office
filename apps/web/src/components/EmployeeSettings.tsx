@@ -150,6 +150,9 @@ export function EmployeeSettings({ e }: { e: Employee }) {
             <EffortSelect value={e.effort ?? ''} onChange={(effort) => patch({ effort })} />
           </Field>
         </div>
+        <SettingRow title="Conectores e MCPs" description="Slack, Drive, Jira… (claude.ai) e MCPs do usuário e do repo, nas tarefas. Somam ~50K tokens a cada chamada; consultas nunca carregam.">
+          <Switch label="Conectores e MCPs" checked={!!e.connectors} onChange={(connectors) => patch({ connectors })} />
+        </SettingRow>
       </Section>
 
       <Section title="Área de trabalho">

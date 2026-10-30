@@ -50,7 +50,8 @@ pnpm typecheck
   - O cadastro sugere os modelos que o provedor anuncia em `/models`.
 - **Consumo de tokens**:
   - Conversas são compactadas pelo Claude Code ao passar de **Compactar conversa acima de** (200K por padrão, via `CLAUDE_CODE_AUTO_COMPACT_WINDOW`). Com provedor, vale a menor entre essa e a janela do provedor. A compactação aparece no chat.
-  - Consultas entre colegas usam o **Modelo das consultas** (sonnet), não o do colega.
+  - Consultas entre colegas usam o **Modelo das consultas** (sonnet), não o do colega, com esforço `low`.
+  - **Conectores e MCPs** (por funcionário, desligado por padrão): os conectores do claude.ai (Slack, Drive, Jira…) e os MCPs do usuário e do repo somam ~50K tokens de tools a cada chamada. Desligado, o processo sobe com `--strict-mcp-config` e só enxerga o MCP `office`. Consultas e onboarding nunca carregam.
   - **Esforço** (`--effort` low…max): padrão do escritório e por funcionário. Vazio deixa o Claude Code decidir. Onboarding não usa.
 - **Conversas**: clicar num funcionário abre um chat.
   - Cada mensagem é um turno que retoma a mesma sessão do Claude (`--resume`), na mesma pasta onde a conversa começou. Se o worktree tiver sido descartado, é recriado no mesmo caminho.
@@ -61,6 +62,7 @@ pnpm typecheck
   - Se a execução anterior ainda estiver na fila, o horário é pulado.
   - A série inteira fica numa conversa só, com sessão nova a cada execução. Para encerrar, cancele a agendada ("Encerrar série").
   - Só notifica no macOS quando uma execução falha.
+  - **Pré-checagem** (opcional): comando de shell que roda no repo antes de cada execução. Sem saída, a execução termina como "nada a fazer" sem chamar o agente; com saída, ela é anexada ao prompt. Saída com código ≠ 0 conta como falha. Bom para polling (PRs, filas, alertas): só gasta tokens quando há o que fazer.
 - **Atalhos**: `N` nova tarefa (para o funcionário aberto, se houver), `⌘K` busca funcionários, tarefas e ações, `Esc` fecha o painel.
 - **Instruções**: o Claude Code carrega o `~/.claude/CLAUDE.md` e o `CLAUDE.md` do repo sozinho. O `AGENTS.md` da raiz do repo vai no system prompt (tasks e consultas), a menos que o `CLAUDE.md` já importe com `@AGENTS.md`.
 - **Modelos**: a lista mostra os aliases (opus/sonnet/haiku, que acompanham a versão mais nova) com a versão real de hoje e as versões fixas. A versão vem do `init` do CLI, com o processo encerrado antes da chamada à API.

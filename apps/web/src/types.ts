@@ -18,6 +18,7 @@ export type Employee = {
   isolation: 'repo' | 'worktree';
   max_parallel: number;
   profile_source: 'auto' | 'manual';
+  connectors: number;
   activity: Activity;
 };
 
@@ -53,6 +54,7 @@ export type Task = {
   resume_session_id: string | null;
   run_at: string | null;
   repeat_every: number | null; // minutos
+  precheck: string | null;
 };
 
 export type Thread = {

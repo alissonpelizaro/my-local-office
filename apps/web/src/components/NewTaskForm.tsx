@@ -35,6 +35,7 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
   const [startNow, setStartNow] = useState(true);
   const [amount, setAmount] = useState(15);
   const [unit, setUnit] = useState(1);
+  const [precheck, setPrecheck] = useState('');
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -62,6 +63,7 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
         body: text.trim(),
         runAt: scheduled ? new Date(startMs).toISOString() : undefined,
         repeatEvery: mode === 'repeat' ? every : undefined,
+        precheck: mode === 'repeat' ? precheck.trim() || undefined : undefined,
       }),
     );
     setBusy(false);
@@ -202,6 +204,9 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
               />
               {!startNow && <DateTime value={at} onChange={setAt} />}
             </div>
+            <Field label="Pré-checagem (opcional)" hint="Comando de shell no repo antes de cada execução. Sem saída, encerra sem chamar o agente; com saída, ela vai no prompt.">
+              <Input className="font-mono" placeholder="Ex.: ~/.local/bin/pr-pendencias" value={precheck} onChange={(e) => setPrecheck(e.target.value)} />
+            </Field>
           </div>
         )}
 
