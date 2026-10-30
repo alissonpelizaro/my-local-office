@@ -82,7 +82,7 @@ export type Models = { cli: string | null; aliases: { alias: string; model: stri
 export type ChatTarget = { kind: 'new' } | { kind: 'thread'; id: number } | { kind: 'native'; sessionId: string; title: string };
 
 export type ToolDetail = { description?: string; command?: string; file?: string; before?: string; after?: string; url?: string };
-export type ToolPayload = { tool: string; input: unknown; summary: string; detail?: ToolDetail; external: boolean; outsideRepo: boolean; rule: string };
+export type ToolPayload = { tool: string; input: unknown; summary: string; detail?: ToolDetail; external: boolean; outsideRepo: boolean; rules: string[] };
 // questions: pergunta estruturada do Claude Code (AskUserQuestion); sem ela, pergunta simples (ask_boss).
 export type Question = { question: string; header?: string; options?: { label: string; description?: string }[]; multiSelect?: boolean };
 export type QuestionPayload = { question: string; options: string[]; questions?: Question[] };
@@ -104,6 +104,7 @@ export type Settings = {
   notifyApprovals: boolean;
   notifyTaskFinished: boolean;
   autoAllowReadOnly: boolean;
+  onlyAskExternal: boolean;
   profileRefreshCommits: number;
 };
 

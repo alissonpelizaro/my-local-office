@@ -13,6 +13,7 @@ const DEFAULTS = {
   notifyApprovals: true,
   notifyTaskFinished: true,
   autoAllowReadOnly: true, // comandos de shell só de leitura (ls, cat, grep, git log…) não pedem permissão
+  onlyAskExternal: false, // só pede permissão para ação externa (push, PR, publish…) e edição fora da pasta de trabalho
   profileRefreshCommits: 40, // ficha automática é refeita quando o repo andou isso de commits; 0 desliga
 };
 export type Settings = typeof DEFAULTS;

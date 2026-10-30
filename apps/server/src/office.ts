@@ -5,7 +5,7 @@ import { activities, publish, setActivity } from './bus.ts';
 import { CONSULT_TIMEOUT_MS, MAX_CONSULT_DEPTH, PRECHECK_TIMEOUT_MS } from './config.ts';
 import { all, type Approval, type Department, type Employee, get, type Provider, run, type Task } from './db.ts';
 import { git } from './git.ts';
-import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, ruleFor } from './policy.ts';
+import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, rulesFor } from './policy.ts';
 import { publicProvider } from './providers.ts';
 import { EFFORTS, type Run, type RunContext, runByToken, startRun, summarize } from './runner.ts';
 import { nextRun } from './schedule.ts';
@@ -299,7 +299,7 @@ export function resolveApproval(id: number, decision: 'allow' | 'deny' | 'always
   if (status === 'answered' && !answer) throw new HttpError(400, 'resposta é obrigatória');
 
   run('UPDATE approvals SET status = ?, answer = ?, decided_at = ? WHERE id = ?', status, answer, now(), id);
-  if (decision === 'always' && a.kind === 'tool' && !payload.external && a.employee_id) addRule(a.employee_id, payload.rule);
+  if (decision === 'always' && a.kind === 'tool' && !payload.external && a.employee_id) addRules(a.employee_id, payload.rules ?? [payload.rule]);
   if (a.kind === 'delegation') {
     run('UPDATE tasks SET status = ? WHERE id = ?', status === 'allowed' ? 'queued' : 'cancelled', payload.taskId);
     publish('task.status', { status: status === 'allowed' ? 'queued' : 'cancelled' }, { employeeId: a.employee_id, taskId: payload.taskId });
@@ -319,11 +319,12 @@ function expireApprovals(taskId: number) {
   }
 }
 
-function addRule(employeeId: number, rule: string) {
+function addRules(employeeId: number, added: string[]) {
   const e = employee(employeeId);
-  if (!e || !rule) return;
+  if (!e) return;
   const rules: string[] = JSON.parse(e.allow_rules);
-  if (!rules.includes(rule)) run('UPDATE employees SET allow_rules = ? WHERE id = ?', JSON.stringify([...rules, rule]), employeeId);
+  const fresh = added.filter((r) => r && !rules.includes(r));
+  if (fresh.length) run('UPDATE employees SET allow_rules = ? WHERE id = ?', JSON.stringify([...rules, ...fresh]), employeeId);
   publish('state.changed', { employeeId });
 }
 
@@ -370,8 +371,12 @@ export async function approveTool(ctx: RunContext, name: string, input: any) {
   const external = isExternal(name, input);
   const file = input?.file_path ?? input?.notebook_path;
   const inRepo = typeof file === 'string' && isInside(ctx.cwd, file);
+  const outsideRepo = EDIT_TOOLS.has(name) && !inRepo;
+  const rules: string[] = JSON.parse(e.allow_rules);
   if (name === 'Bash' && settings().autoAllowReadOnly && isReadOnlyCommand(input?.command, ctx.cwd)) return allow(input);
-  if (!external && allowedByRule(JSON.parse(e.allow_rules), name, input, ctx.cwd)) return allow(input);
+  // ponytail: "externo" é lista de padrões (push, PR, publish, docker, gh api de escrita, MCP de envio); rm/curl locais passam.
+  if (!external && !outsideRepo && settings().onlyAskExternal) return allow(input);
+  if (!external && allowedByRule(rules, name, input, ctx.cwd)) return allow(input);
   if (!external && EDIT_TOOLS.has(name) && inRepo && e.auto_edit) return allow(input);
 
   const d = await waitApproval(ctx, 'tool', {
@@ -380,8 +385,8 @@ export async function approveTool(ctx: RunContext, name: string, input: any) {
     summary: summarize(input),
     detail: toolDetail(name, input),
     external,
-    outsideRepo: EDIT_TOOLS.has(name) && !inRepo,
-    rule: ruleFor(name, input),
+    outsideRepo,
+    rules: rulesFor(rules, name, input, ctx.cwd),
   });
   return d.status === 'allowed' ? allow(input) : deny(d.answer || (d.status === 'expired' ? 'Expirou.' : 'Negado pelo chefe.'));
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { allowedByRule, isExternal, isInside, isReadOnlyCommand, ruleFor } from './policy.ts';
+import { allowedByRule, isExternal, isInside, isReadOnlyCommand, rulesFor } from './policy.ts';
 
 test('isReadOnlyCommand: exploração local liberada', () => {
   const cwd = '/r/repo';
@@ -20,6 +20,9 @@ test('isReadOnlyCommand: exploração local liberada', () => {
     "gh api /user/repos | jq '.[] | .name'",
     "gh api graphql -F 'query=query($login: String!){ viewer { login } }' 2>/dev/null",
     'gh api search/issues -X GET -f q=is:pr',
+    'cd apps/api && ls',
+    'cd /r/repo/apps && cat package.json; echo rc=$?',
+    'grep -v "renewal.spec\\|referrals.spec" log.txt',
   ]) {
     assert.equal(isReadOnlyCommand(cmd, cwd), true, cmd);
   }
@@ -50,6 +53,12 @@ test('isReadOnlyCommand: qualquer dúvida pede permissão', () => {
     'git diff --output=/tmp/x',
     'xargs rm',
     'cd / && cat etc/passwd',
+    'cd && cat .ssh/id_rsa',
+    'cd - && ls',
+    'cd ~ && ls',
+    'cd ../outro && ls',
+    'echo "\\$(id)" $(id)',
+    'echo "$HOME"',
     'FOO=1 ls',
     'ls\nrm x',
     'node script.js',
@@ -92,10 +101,17 @@ test('isExternal: ações que saem da máquina', () => {
   assert.equal(isExternal('Write', { file_path: 'x' }), false);
 });
 
-test('ruleFor e allowedByRule: prefixo de duas palavras, cada trecho do composto coberto', () => {
-  assert.equal(ruleFor('Bash', { command: '  pnpm test --filter api' }), 'Bash:pnpm test');
-  assert.equal(ruleFor('Bash', { command: 'rtk gh api graphql -F x' }), 'Bash:gh api');
-  assert.equal(ruleFor('WebFetch', { url: 'x' }), 'WebFetch');
+test('rulesFor e allowedByRule: prefixo de duas palavras, cada trecho do composto coberto', () => {
+  const rulesFor_ = (command: string, rules: string[] = []) => rulesFor(rules, 'Bash', { command }, '/r/repo');
+  assert.deepEqual(rulesFor_('  pnpm test --filter api'), ['Bash:pnpm test']);
+  assert.deepEqual(rulesFor_('rtk uv run pytest -q'), ['Bash:uv run']);
+  assert.deepEqual(rulesFor(['x'], 'WebFetch', { url: 'x' }, '/r/repo'), ['WebFetch']);
+  // Composto: só os trechos que ainda pediriam permissão, sem `cd` para dentro do repo nem leitura.
+  const composite = 'cd /r/repo && npx tsc --noEmit 2>&1 | grep -v "a.spec\\|b.spec" | head; pnpm build 2>&1 | tail -3; echo tsc=$?';
+  assert.deepEqual(rulesFor_(composite), ['Bash:npx tsc', 'Bash:pnpm build']);
+  assert.deepEqual(rulesFor_(composite, ['Bash:npx tsc']), ['Bash:pnpm build']);
+  assert.equal(allowedByRule(['Bash:npx tsc', 'Bash:pnpm build'], 'Bash', { command: composite }, '/r/repo'), true);
+  assert.deepEqual(rulesFor_('echo $(whoami)'), []);
   const rules = ['Bash:pnpm test', 'Bash:rtk uv run', 'WebFetch'];
   const allowed = (command: string) => allowedByRule(rules, 'Bash', { command }, '/r/repo');
   assert.equal(allowed('pnpm test'), true);
