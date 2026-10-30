@@ -108,8 +108,6 @@ export function startRun(o: StartRun): Run {
   const env = { ...childEnv(provider), ...(windows.length && { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(Math.min(...windows)) }) };
   const child = spawn(CLAUDE_BIN, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => {}); // EPIPE quando o processo morre antes de ler
-  let sent = 1;
-  let results = 0;
   child.stdin.write(userMessage(o.prompt));
 
   let sessionId: string | null = null;
@@ -149,8 +147,9 @@ export function startRun(o: StartRun): Run {
         costUsd: provider && /\/\/(127\.0\.0\.1|localhost)\b/.test(provider.base_url) ? 0 : (m.total_cost_usd ?? 0),
         isError: Boolean(m.is_error) || m.subtype !== 'success',
       };
-      // Com stdin aberto o CLI espera a próxima mensagem; fecha quando todas as enviadas tiveram resposta.
-      if (++results >= sent) child.stdin.end();
+      // Com stdin aberto o CLI espera a próxima mensagem. Fecha no primeiro result: mensagem absorvida no meio do turno
+      // não gera result próprio (contar enviadas deixava o processo pendurado), e a que ficou na fila vira turno antes de sair.
+      child.stdin.end();
     }
   });
 
@@ -189,7 +188,6 @@ export function startRun(o: StartRun): Run {
     done,
     send(text) {
       if (child.stdin.writableEnded) return false;
-      sent++;
       child.stdin.write(userMessage(text));
       return true;
     },
