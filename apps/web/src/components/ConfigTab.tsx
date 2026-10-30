@@ -470,6 +470,12 @@ function SettingsSection() {
           >
             <Switch label="Liberar comandos só de leitura" checked={settings.autoAllowReadOnly} onChange={(autoAllowReadOnly) => save({ autoAllowReadOnly })} />
           </SettingRow>
+          <SettingRow
+            title="Só pedir permissão para ações externas"
+            description="Agentes rodam qualquer comando local e editam no repo sem pedir. Continuam pedindo: git push, criar/mergear/revisar PR, publish, docker/kubectl/gcloud/terraform, gh api de escrita, MCP de envio e edição fora da pasta de trabalho. Atenção: rm, curl e afins locais passam."
+          >
+            <Switch label="Só pedir permissão para ações externas" checked={settings.onlyAskExternal} onChange={(onlyAskExternal) => save({ onlyAskExternal })} />
+          </SettingRow>
         </div>
       </Card>
 

@@ -153,8 +153,8 @@ function ToolCard({ id, who, payload: p, onOpen }: { id: number; who: string; pa
             <Button variant="primary" size="sm" icon="check" onClick={() => decide({ decision: 'allow' })}>
               Permitir
             </Button>
-            {!p.external && (
-              <Button size="sm" title={`Libera sempre para este funcionário: ${p.rule}`} onClick={() => decide({ decision: 'always' })}>
+            {!p.external && p.rules?.length > 0 && (
+              <Button size="sm" title={`Libera sempre para este funcionário: ${p.rules.join(', ')}`} onClick={() => decide({ decision: 'always' })}>
                 Sempre permitir
               </Button>
             )}

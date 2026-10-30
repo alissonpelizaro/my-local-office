@@ -25,14 +25,23 @@ export function isExternal(name: string, input: any) {
 
 const unRtk = (tokens: string[]) => (tokens[0] === 'rtk' ? tokens.slice(1) : tokens); // rtk: proxy do usuário, transparente
 
-export const ruleFor = (name: string, input: any) =>
-  name === 'Bash' ? `Bash:${unRtk(String(input?.command ?? '').trim().split(/\s+/)).slice(0, 2).join(' ')}` : name;
-
 // Composto passa quando cada trecho é coberto por uma regra ou é só leitura: `pnpm test 2>&1 | tail` herda `Bash:pnpm test`.
+function covered(rules: string[], cwd: string) {
+  const prefixes = rules.filter((r) => r.startsWith('Bash:')).map((r) => unRtk(r.slice(5).trim().split(/\s+/))).filter((p) => p.length);
+  return (t: string[]) => prefixes.some((p) => p.every((w, i) => t[i] === w)) || readOnlySegment(t, cwd);
+}
+
 export function allowedByRule(rules: string[], name: string, input: any, cwd: string) {
   if (name !== 'Bash') return rules.includes(name);
-  const prefixes = rules.filter((r) => r.startsWith('Bash:')).map((r) => unRtk(r.slice(5).trim().split(/\s+/))).filter((p) => p.length);
-  return segments(input?.command)?.every((t) => prefixes.some((p) => p.every((w, i) => t[i] === w)) || readOnlySegment(t, cwd)) ?? false;
+  return segments(input?.command)?.every(covered(rules, cwd)) ?? false;
+}
+
+// O que "sempre permitir" grava: um prefixo de duas palavras por trecho ainda não coberto
+// (`cd x && npx tsc | tail` vira `Bash:npx tsc`). Sintaxe que não analisamos nunca casaria com regra: nada a gravar.
+export function rulesFor(rules: string[], name: string, input: any, cwd: string) {
+  if (name !== 'Bash') return [name];
+  const isCovered = covered(rules, cwd);
+  return [...new Set((segments(input?.command) ?? []).filter((t) => !isCovered(t)).map((t) => `Bash:${t.slice(0, 2).join(' ')}`))];
 }
 
 export const isInside = (root: string, file: string) => {
@@ -48,7 +57,7 @@ export const isInside = (root: string, file: string) => {
 const READ_ONLY = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg', 'find', 'tree', 'pwd', 'echo', 'sort', 'uniq', 'cut', 'tr', 'nl',
   'file', 'stat', 'du', 'df', 'which', 'basename', 'dirname', 'realpath', 'readlink', 'jq', 'diff', 'cmp', 'comm', 'column', 'true',
-  'date', 'uname', 'whoami', 'hostname', 'git', 'gh',
+  'date', 'uname', 'whoami', 'hostname', 'git', 'gh', 'cd',
 ]);
 const GIT_READ_ONLY = new Set(['status', 'log', 'diff', 'show', 'ls-files', 'ls-tree', 'rev-parse', 'blame', 'grep', 'describe', 'shortlog', 'cat-file', 'branch', 'remote', 'tag', 'worktree']);
 // Flags que fazem programas "de leitura" escreverem arquivos ou executarem comandos.
@@ -89,9 +98,14 @@ function parseShell(cmd: string): string[][] | null {
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i];
+    if (c === '$' && cmd[i + 1] === '?') {
+      token += cmd[i++] + cmd[i]; // status do último comando (`echo rc=$?`): só texto
+      continue;
+    }
     if (quote) {
       if (c === quote) quote = null;
-      else if (quote === '"' && (c === '$' || c === '`' || c === '\\')) return null;
+      else if (quote === '"' && c === '\\') token += '$`"\\'.includes(cmd[i + 1]) ? cmd[++i] : c; // `grep "a\|b"`: \ só escapa $ ` " \
+      else if (quote === '"' && (c === '$' || c === '`')) return null;
       else token += c;
       continue;
     }
@@ -116,6 +130,8 @@ const segments = (command: unknown) => parseShell(String(command ?? '').replace(
 function readOnlySegment([program, ...args]: string[], cwd: string) {
   if (!program || !READ_ONLY.has(program)) return false;
   if (args.some((a) => BANNED_FLAGS[program]?.test(a))) return false;
+  // Só para dentro da pasta de trabalho, com destino explícito (`cd` sozinho e `cd -` saem dela).
+  if (program === 'cd') return args.length === 1 && !/^[-~]/.test(args[0]) && isInside(cwd, args[0]);
   // Argumentos do gh são repos e endpoints, não caminhos.
   if (program === 'gh') return args[0] === 'api' ? !ghApiWrites(args) : Boolean(GH_READ_ONLY[args[0]]?.includes(args[1]));
   if (program === 'git') {
