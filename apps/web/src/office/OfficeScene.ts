@@ -20,6 +20,10 @@ const FLOOR_DEPTH = -1e6;
 const LABEL_DEPTH = 5e5;
 const OVERLAY_DEPTH = 1e6;
 const SPEED = 150; // px/s
+// A aba em background congela o rAF do Phaser; ao voltar, um único tick em atraso veria
+// todos os nextWander no passado e faria todo mundo sair junto. Acima disso é "puxou
+// tick" — remarca em vez de agir, espalhando a descompressão em vez de estourar junto.
+const WANDER_MAX_GAP = 5000;
 const FONT = 'ui-sans-serif, system-ui, -apple-system, sans-serif';
 const SKIN = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac];
 const HAIR = [0x2c1b10, 0x5a3825, 0xb55239, 0xe6c27a, 0x1a1a1a, 0x7a7a7a];
@@ -651,6 +655,7 @@ export class OfficeScene extends Phaser.Scene {
     if (!pending) {
       c.alert?.destroy();
       c.alert = undefined;
+      this.goHome(c);
       return;
     }
     const circle = this.add.circle(0, 0, 11, 0xdc2626).setStrokeStyle(2, 0xffffff);
@@ -658,6 +663,25 @@ export class OfficeScene extends Phaser.Scene {
     c.alert = this.add.container(c.root.x, c.root.y - 54, [circle, mark]).setDepth(OVERLAY_DEPTH + 1).setSize(24, 24).setInteractive({ useHandCursor: true });
     c.alert.on('pointerup', () => this.onSelect(c.id));
     this.tweens.add({ targets: c.alert, scale: 1.2, duration: 450, yoyo: true, repeat: -1 });
+    this.deliverToBoss(c);
+  }
+
+  // Pede permissão: vai até a mesa do chefe depositar a papelada e fica esperando.
+  // ponytail: vários pedidos empilham no mesmo ponto; fila com slots por funcionário se lotar.
+  private deliverToBoss(c: Char) {
+    if (!this.pile) return;
+    this.leaveSpot(c);
+    c.mission = true;
+    c.away = true;
+    this.drawScreen(c);
+    const desk = this.pile.desk;
+    const visitor = { gx: desk.gx + 1.3, gy: desk.gy + 1.5 };
+    c.arrival = this.walk(c, route(this.plan!, c.room, 'boss', visitor), 'boss');
+    c.arrival.then((arrived) => {
+      if (!arrived) return;
+      this.face(c, 'back');
+      this.float(c, '📝');
+    });
   }
 
   // Anda pelos pontos; resolve true ao chegar, false se outra caminhada a interromper.
@@ -818,6 +842,10 @@ export class OfficeScene extends Phaser.Scene {
     const now = this.time.now;
     for (const c of this.chars.values()) {
       if (c.activity !== 'idle' || c.mission || c.walking || c.pending || now < c.nextWander) continue;
+      if (now - c.nextWander > WANDER_MAX_GAP) {
+        c.nextWander = now + Phaser.Math.Between(1000, 45000);
+        continue;
+      }
       if (c.away) {
         c.nextWander = now + Phaser.Math.Between(30000, 90000);
         this.goHome(c);
