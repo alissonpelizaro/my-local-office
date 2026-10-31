@@ -655,33 +655,14 @@ export class OfficeScene extends Phaser.Scene {
     if (!pending) {
       c.alert?.destroy();
       c.alert = undefined;
-      this.goHome(c);
       return;
     }
+    // Pede permissão: sobe o aviso "!" sobre a cabeça; o funcionário fica no lugar.
     const circle = this.add.circle(0, 0, 11, 0xdc2626).setStrokeStyle(2, 0xffffff);
     const mark = this.add.text(0, 0, '!', { fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: '#ffffff', resolution: 2 }).setOrigin(0.5);
     c.alert = this.add.container(c.root.x, c.root.y - 54, [circle, mark]).setDepth(OVERLAY_DEPTH + 1).setSize(24, 24).setInteractive({ useHandCursor: true });
     c.alert.on('pointerup', () => this.onSelect(c.id));
     this.tweens.add({ targets: c.alert, scale: 1.2, duration: 450, yoyo: true, repeat: -1 });
-    this.deliverToBoss(c);
-  }
-
-  // Pede permissão: vai até a mesa do chefe depositar a papelada e fica esperando.
-  // ponytail: vários pedidos empilham no mesmo ponto; fila com slots por funcionário se lotar.
-  private deliverToBoss(c: Char) {
-    if (!this.pile) return;
-    this.leaveSpot(c);
-    c.mission = true;
-    c.away = true;
-    this.drawScreen(c);
-    const desk = this.pile.desk;
-    const visitor = { gx: desk.gx + 1.3, gy: desk.gy + 1.5 };
-    c.arrival = this.walk(c, route(this.plan!, c.room, 'boss', visitor), 'boss');
-    c.arrival.then((arrived) => {
-      if (!arrived) return;
-      this.face(c, 'back');
-      this.float(c, '📝');
-    });
   }
 
   // Anda pelos pontos; resolve true ao chegar, false se outra caminhada a interromper.
