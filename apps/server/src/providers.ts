@@ -43,4 +43,15 @@ export function childEnv(provider: Provider | undefined): NodeJS.ProcessEnv {
   };
 }
 
+// Teto de tasks simultâneas do provedor. Nativo (providerId == null) é ilimitado.
+// Contado ao vivo na lista de execução ativas: senão duas tasks do mesmo provedor passariam num mesmo pump.
+// Consultas entre colegas e onboarding não entram nessa lista (correm fora da fila), então um A pode
+// perguntar a um B do mesmo provedor e o B atender — o limite não trava a conversa dos dois.
+export function providerFull(active: { provider_id: number | null }[], providerId: number | null, limit: number): boolean {
+  if (providerId == null) return false;
+  let inUse = 0;
+  for (const r of active) if (r.provider_id === providerId) inUse++;
+  return inUse >= limit;
+}
+
 export const publicProvider = ({ api_key, ...p }: Provider) => ({ ...p, has_key: Boolean(api_key) });

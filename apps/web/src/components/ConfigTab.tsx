@@ -298,7 +298,7 @@ function ImportSection({ onDone }: { onDone: () => void }) {
 
 // ---------- provedores ----------
 
-const BLANK = { name: '', format: 'openai' as Provider['format'], baseUrl: '', apiKey: '', model: '', smallModel: '', contextWindow: '' };
+const BLANK = { name: '', format: 'openai' as Provider['format'], baseUrl: '', apiKey: '', model: '', smallModel: '', contextWindow: '', maxParallel: '1' };
 // O Ollama fala a API da Anthropic direto. A janela precisa bater com o contexto carregado nele (OLLAMA_CONTEXT_LENGTH).
 const OLLAMA: typeof BLANK = { ...BLANK, name: 'Ollama', format: 'anthropic', baseUrl: 'http://127.0.0.1:11434', contextWindow: '65536' };
 const isLocal = (url: string) => /\/\/(127\.0\.0\.1|localhost)\b/.test(url);
@@ -356,6 +356,7 @@ function ProvidersSection() {
                   {p.base_url} · {p.model}
                   {p.small_model ? ` / ${p.small_model}` : ''}
                   {p.context_window ? ` · ${Math.round(p.context_window / 1000)}K` : ''}
+                  {` · ${p.max_parallel}× tarefa`}
                 </div>
               </div>
               <Button
@@ -363,7 +364,7 @@ function ProvidersSection() {
                 icon="pencil"
                 onClick={() =>
                   open(
-                    { name: p.name, format: p.format, baseUrl: p.base_url, apiKey: '', model: p.model, smallModel: p.small_model ?? '', contextWindow: p.context_window ? String(p.context_window) : '' },
+                    { name: p.name, format: p.format, baseUrl: p.base_url, apiKey: '', model: p.model, smallModel: p.small_model ?? '', contextWindow: p.context_window ? String(p.context_window) : '', maxParallel: String(p.max_parallel) },
                     p.id,
                   )
                 }
@@ -421,6 +422,9 @@ function ProvidersSection() {
             </Field>
             <Field label="Janela de contexto (opcional)" hint="Tokens que o modelo aguenta; a conversa é compactada antes. No Ollama, o mesmo valor de OLLAMA_CONTEXT_LENGTH.">
               <Input inputMode="numeric" placeholder="65536" {...bind('contextWindow')} />
+            </Field>
+            <Field label="Tarefas simultâneas" hint="Máximo de tasks deste provedor ao mesmo tempo. Consultas entre colegas ficam à parte — o limite não trava a conversa deles.">
+              <Input inputMode="numeric" placeholder="1" {...bind('maxParallel')} />
             </Field>
             <datalist id="provider-models">
               {found.map((m) => (

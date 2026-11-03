@@ -30,6 +30,7 @@ export type Provider = {
   model: string;
   small_model: string | null;
   context_window: number | null;
+  max_parallel: number;
   has_key: boolean;
 };
 
