@@ -116,6 +116,7 @@ addColumn('tasks', 'repeat_every', 'INTEGER'); // minutos; a série inteira divi
 addColumn('usage', 'session_id', 'TEXT');
 addColumn('employees', 'effort', 'TEXT');
 addColumn('providers', 'context_window', 'INTEGER'); // tokens que o modelo aguenta (ex. num_ctx do Ollama)
+addColumn('providers', 'max_parallel', 'INTEGER NOT NULL DEFAULT 1'); // tasks simultâneas do provedor (nativo = sem teto)
 addColumn('employees', 'connectors', 'INTEGER NOT NULL DEFAULT 0'); // carrega conectores claude.ai e MCPs do usuário/projeto nas tasks
 addColumn('tasks', 'precheck', 'TEXT'); // comando que decide se a task precisa do agente (vazio = nada a fazer)
 db.exec('CREATE INDEX IF NOT EXISTS tasks_thread ON tasks (thread_id)');
@@ -143,6 +144,7 @@ export type Provider = {
   model: string;
   small_model: string | null;
   context_window: number | null;
+  max_parallel: number;
 };
 export type Employee = {
   id: number;

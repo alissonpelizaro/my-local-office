@@ -6,7 +6,7 @@ import { CONSULT_TIMEOUT_MS, MAX_CONSULT_DEPTH, PRECHECK_TIMEOUT_MS } from './co
 import { all, type Approval, type Department, type Employee, get, type Provider, run, type Task } from './db.ts';
 import { git } from './git.ts';
 import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, rulesFor } from './policy.ts';
-import { publicProvider } from './providers.ts';
+import { providerFull, publicProvider } from './providers.ts';
 import { EFFORTS, type Run, type RunContext, runByToken, startRun, summarize } from './runner.ts';
 import { nextRun } from './schedule.ts';
 import { settings } from './settings.ts';
@@ -84,17 +84,22 @@ export function deleteDepartment(id: number) {
   publish('state.changed');
 }
 
-type ProviderInput = { id?: number; name?: string; format?: string; baseUrl?: string; apiKey?: string; model?: string; smallModel?: string; contextWindow?: number | string };
+// Teto de tasks simultâneas do provedor; provedor sem registro não tem teto (nativo).
+const providerLimit = (providerId: number) => get<Provider>('SELECT max_parallel FROM providers WHERE id = ?', providerId)?.max_parallel ?? 1;
+
+type ProviderInput = { id?: number; name?: string; format?: string; baseUrl?: string; apiKey?: string; model?: string; smallModel?: string; contextWindow?: number | string; maxParallel?: number | string };
 
 export function saveProvider(b: ProviderInput) {
   if (b.format !== 'anthropic' && b.format !== 'openai') throw new HttpError(400, 'format deve ser anthropic ou openai');
   const window = Math.trunc(Number(b.contextWindow)) || null;
-  const fields = [required(b.name, 'name'), b.format, required(b.baseUrl, 'baseUrl').replace(/\/+$/, ''), required(b.model, 'model'), b.smallModel?.trim() || null, window];
+  // Sem teto sensato seria uma carga indesejada no endpoint; clamp em [1, 10].
+  const maxParallel = Math.min(10, Math.max(1, Math.trunc(Number(b.maxParallel)) || 1));
+  const fields = [required(b.name, 'name'), b.format, required(b.baseUrl, 'baseUrl').replace(/\/+$/, ''), required(b.model, 'model'), b.smallModel?.trim() || null, window, maxParallel];
   let id = b.id;
   if (id) {
-    run('UPDATE providers SET name = ?, format = ?, base_url = ?, model = ?, small_model = ?, context_window = ? WHERE id = ?', ...fields, id);
+    run('UPDATE providers SET name = ?, format = ?, base_url = ?, model = ?, small_model = ?, context_window = ?, max_parallel = ? WHERE id = ?', ...fields, id);
   } else {
-    id = Number(run('INSERT INTO providers (name, format, base_url, model, small_model, context_window) VALUES (?, ?, ?, ?, ?, ?)', ...fields).lastInsertRowid);
+    id = Number(run('INSERT INTO providers (name, format, base_url, model, small_model, context_window, max_parallel) VALUES (?, ?, ?, ?, ?, ?, ?)', ...fields).lastInsertRowid);
   }
   // Campo vazio mantém a chave salva; ela nunca volta para a UI.
   if (b.apiKey?.trim()) run('UPDATE providers SET api_key = ? WHERE id = ?', b.apiKey.trim(), id);
@@ -654,6 +659,8 @@ function pump() {
     if (!e || checking.has(t.id)) continue;
     const mine = [...active.values()].filter((r) => r.ctx.employee.id === e.id);
     if (mine.length >= Math.max(1, e.max_parallel)) continue;
+    // Teto por provedor (ao vivo): um provedor local com 1 slot não deixa duas tasks dele rodarem juntas.
+    if (e.provider_id != null && providerFull([...active.values()].map((r) => r.ctx.employee), e.provider_id, providerLimit(e.provider_id))) continue;
     if (t.precheck) {
       precheck(t, e);
       continue;
