@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { everyLabel, money, names, STATUS, time, when } from '../format';
-import { act, api, closeNewTask, openChat, openNewTask, openTask, startReplay, useOffice, type TaskView } from '../store';
+import { act, api, closeNewTask, openChat, openEditTask, openNewTask, openTask, startReplay, useOffice, type TaskView } from '../store';
 import type { OfficeEvent, Task } from '../types';
 import { EventLog } from './EventLog';
 import { Icon } from './icons';
 import { Markdown } from './Markdown';
-import { NewTaskForm } from './NewTaskForm';
+import { editable, NewTaskForm } from './NewTaskForm';
 import { nextScheduleHint, TaskRow } from './TaskRow';
 import { Button, Chip, ConfirmButton, cx, Empty, Input, Modal, Segmented, StatusIcon } from './ui';
 
@@ -97,10 +97,10 @@ export function NewTaskModal() {
     <Modal open={!!newTask} onClose={closeNewTask} className="w-[min(600px,calc(100vw-2rem))]">
       <div className="max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Nova tarefa</h2>
+          <h2 className="text-lg font-semibold">{last.current?.task ? 'Editar tarefa' : 'Nova tarefa'}</h2>
           <Button variant="ghost" size="icon" icon="x" onClick={closeNewTask} aria-label="Fechar" />
         </div>
-        {last.current && <NewTaskForm key={JSON.stringify(last.current)} employeeId={last.current.employeeId} onDone={closeNewTask} />}
+        {last.current && <NewTaskForm key={JSON.stringify(last.current)} employeeId={last.current.employeeId} task={last.current.task} onDone={closeNewTask} />}
       </div>
     </Modal>
   );
@@ -215,6 +215,7 @@ function TaskDetail({ taskId }: { taskId: number }) {
           {t.repeat_every ? 'Ver execuções' : 'Abrir conversa'}
         </Button>
         {ran && events.length > 0 && <Button icon="play" onClick={() => startReplay(t.id)}>Assistir</Button>}
+        {editable(t) && <Button icon="pencil" onClick={() => openEditTask(t)}>Editar</Button>}
         {t.repeat_every && (t.status === 'scheduled' || t.status === 'paused') && <PauseButton task={t} />}
         {(t.status === 'running' || t.status === 'scheduled' || t.status === 'paused' || t.status === 'queued' || t.status === 'pending_approval') && (
           <ConfirmButton

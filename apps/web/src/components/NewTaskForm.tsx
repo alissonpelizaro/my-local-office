@@ -24,18 +24,25 @@ const UNITS = [
 // Valor de <input type="datetime-local"> no fuso local.
 const localInput = (ms: number) => new Date(ms - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 const roundedFuture = (min: number) => Math.ceil((Date.now() + min * 60_000) / 300_000) * 300_000;
+const unitOf = (min: number) => (min % 1440 === 0 ? 1440 : min % 60 === 0 ? 60 : 1);
 
-export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDone?: () => void }) {
+// Só o que ainda não começou e veio do chefe (continuações e delegações têm título e corpo separados).
+export const editable = (t: Task) =>
+  t.origin === 'user' && !t.parent_task_id && (t.status === 'scheduled' || t.status === 'paused' || (t.status === 'queued' && !t.repeat_every));
+
+// Com `task`, edita a tarefa (sem trocar o funcionário).
+export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number; task?: Task; onDone?: () => void }) {
   const employees = useOffice((s) => s.state.employees);
   const departments = useOffice((s) => s.state.departments);
   const [to, setTo] = useState<number | null>(employeeId ?? (employees.length === 1 ? employees[0].id : null));
-  const [text, setText] = useState('');
-  const [mode, setMode] = useState<Mode>('now');
-  const [at, setAt] = useState(() => localInput(roundedFuture(30)));
-  const [startNow, setStartNow] = useState(true);
-  const [amount, setAmount] = useState(15);
-  const [unit, setUnit] = useState(1);
-  const [precheck, setPrecheck] = useState('');
+  const series = task?.repeat_every;
+  const [text, setText] = useState(task ? task.body || task.title : '');
+  const [mode, setMode] = useState<Mode>(series ? 'repeat' : task?.status === 'scheduled' ? 'at' : 'now');
+  const [at, setAt] = useState(() => localInput(task?.run_at && task.status !== 'queued' ? Date.parse(task.run_at) : roundedFuture(30)));
+  const [startNow, setStartNow] = useState(!series);
+  const [amount, setAmount] = useState(series ? series / unitOf(series) : 15);
+  const [unit, setUnit] = useState(series ? unitOf(series) : 1);
+  const [precheck, setPrecheck] = useState(task?.precheck ?? '');
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -49,26 +56,26 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
   const scheduled = mode === 'at' || (mode === 'repeat' && !startNow);
   const startMs = scheduled ? new Date(at).getTime() : Date.now();
   const past = scheduled && startMs <= Date.now();
-  const shown = filter ? employees.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())) : employees;
+  const shown = task ? employees.filter((e) => e.id === to) : filter ? employees.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())) : employees;
   const name = employees.find((e) => e.id === to)?.name;
   const ready = !!to && !!text.trim() && !busy && !(scheduled && Number.isNaN(startMs));
 
   const submit = async () => {
     if (!ready) return;
     setBusy(true);
-    const t = await act(() =>
-      api<Task>('POST', '/api/tasks', {
-        employeeId: to,
-        title: titleOf(text),
-        body: text.trim(),
-        runAt: scheduled ? new Date(startMs).toISOString() : undefined,
-        repeatEvery: mode === 'repeat' ? every : undefined,
-        precheck: mode === 'repeat' ? precheck.trim() || undefined : undefined,
-      }),
-    );
+    const b = {
+      title: titleOf(text),
+      body: text.trim(),
+      runAt: scheduled ? new Date(startMs).toISOString() : undefined,
+      repeatEvery: mode === 'repeat' ? every : undefined,
+      precheck: mode === 'repeat' ? precheck.trim() || undefined : undefined,
+    };
+    const t = await act(() => (task ? api<Task>('PATCH', `/api/tasks/${task.id}`, b) : api<Task>('POST', '/api/tasks', { employeeId: to, ...b })));
     setBusy(false);
     if (!t) return;
-    const what = mode === 'repeat' ? `Série criada: ${everyLabel(every)}` : scheduled && !past ? `Agendada para ${when(startMs)}` : 'Tarefa enviada';
+    const what = task
+      ? 'Tarefa atualizada'
+      : mode === 'repeat' ? `Série criada: ${everyLabel(every)}` : scheduled && !past ? `Agendada para ${when(startMs)}` : 'Tarefa enviada';
     toast(`${what} · ${name}`, 'success', { label: 'Abrir conversa', run: () => openChat(t.employee_id, { kind: 'thread', id: t.thread_id }) });
     onDone?.();
   };
@@ -88,7 +95,7 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
       }}
     >
       <Field group label="Para quem" hint={!to && employees.length > 0 ? 'Escolha quem vai fazer.' : undefined}>
-        {employees.length > 8 && <Input placeholder="Filtrar funcionários…" value={filter} onChange={(e) => setFilter(e.target.value)} />}
+        {!task && employees.length > 8 && <Input placeholder="Filtrar funcionários…" value={filter} onChange={(e) => setFilter(e.target.value)} />}
         <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto p-0.5">
           {shown.map((e) => {
             const on = to === e.id;
@@ -96,6 +103,7 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
               <button
                 type="button"
                 key={e.id}
+                disabled={!!task}
                 onClick={() => {
                   setTo(e.id);
                   textRef.current?.focus();
@@ -162,7 +170,7 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
                   key={m}
                   on={every === m}
                   onClick={() => {
-                    const u = m % 1440 === 0 ? 1440 : m % 60 === 0 ? 60 : 1;
+                    const u = unitOf(m);
                     setUnit(u);
                     setAmount(m / u);
                   }}
@@ -215,15 +223,15 @@ export function NewTaskForm({ employeeId, onDone }: { employeeId?: number; onDon
 
       <div className="flex items-center justify-end gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-800">
         <span className="mr-auto hidden text-xs text-zinc-400 sm:inline">
-          <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> cria
+          <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> {task ? 'salva' : 'cria'}
         </span>
         {onDone && (
           <Button type="button" variant="ghost" onClick={onDone}>
             Cancelar
           </Button>
         )}
-        <Button type="submit" variant="primary" icon={mode === 'repeat' ? 'repeat' : scheduled ? 'calendar' : 'arrowUp'} busy={busy} disabled={!ready}>
-          {mode === 'repeat' ? 'Criar repetição' : scheduled && !past ? 'Agendar' : 'Começar agora'}
+        <Button type="submit" variant="primary" icon={task ? 'check' : mode === 'repeat' ? 'repeat' : scheduled ? 'calendar' : 'arrowUp'} busy={busy} disabled={!ready}>
+          {task ? 'Salvar' : mode === 'repeat' ? 'Criar repetição' : scheduled && !past ? 'Agendar' : 'Começar agora'}
         </Button>
       </div>
     </form>
