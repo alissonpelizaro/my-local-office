@@ -33,6 +33,7 @@ prefersDark.addEventListener('change', () => {
 type Store = {
   state: OfficeState;
   loaded: boolean;
+  loadFailed: boolean;
   connected: boolean;
   events: OfficeEvent[];
   tab: Tab;
@@ -78,6 +79,7 @@ const EMPTY: OfficeState = {
 export const useOffice = create<Store>(() => ({
   state: EMPTY,
   loaded: false,
+  loadFailed: false,
   connected: false,
   events: [],
   tab: 'office',
@@ -138,8 +140,9 @@ export function toast(text: string, tone: Toast['tone'] = 'error', action?: Toas
 
 export async function refresh() {
   try {
-    set({ state: await api<OfficeState>('GET', '/api/state'), loaded: true });
+    set({ state: await api<OfficeState>('GET', '/api/state'), loaded: true, loadFailed: false });
   } catch (e) {
+    set({ loadFailed: true });
     toast(`Falha ao carregar estado: ${(e as Error).message}`);
   }
 }
@@ -188,12 +191,14 @@ export async function loadModels(force = false) {
 }
 
 export function connect() {
+  // O estado já via HTTP, sem esperar a SSE abrir: a tela de carregamento resolve o mais rápido possível
+  // e não fica presa num spinner infinito quando o servidor está fora.
+  void refresh();
   const es = new EventSource('/api/events');
   let openedAt = Date.now();
   es.onopen = () => {
     openedAt = Date.now();
     set({ connected: true });
-    refresh();
     loadModels();
   };
   es.onerror = () => set({ connected: false });

@@ -9,6 +9,7 @@ import { NewTaskModal, TasksTab } from './components/TasksTab';
 import { Button, cx, Kbd, Spinner } from './components/ui';
 import { Toasts } from './components/Toasts';
 import { connect, openNewTask, openTask, selectEmployee, setInbox, setPalette, setTab, setTheme, type Tab, type Theme, useOffice } from './store';
+import { LoadingScreen } from './components/LoadingScreen';
 
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'office', label: 'Escritório', icon: 'building' },
@@ -41,6 +42,10 @@ export function App() {
   }, []);
   const tab = useOffice((s) => s.tab);
   const offline = useOffice((s) => s.loaded && !s.connected);
+  const loaded = useOffice((s) => s.loaded);
+
+  // Só revela o escritório com o estado carregado; antes disso, tela de loading.
+  if (!loaded) return <LoadingScreen />;
 
   return (
     <div className="flex h-full flex-col">
