@@ -83,6 +83,10 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
         todosAt = -1;
         rows.push({ kind: 'run', key: `r${e.id}`, ts: e.ts });
         break;
+      case 'task.updated':
+        flush();
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: '✏️', text: 'Você editou o pedido', detail: d.body || d.title });
+        break;
       case 'boss.message':
         flush();
         rows.push({ kind: 'user', key: `u${e.id}`, text: d.text, ts: e.ts, who: 'Você', note: 'durante o trabalho' });

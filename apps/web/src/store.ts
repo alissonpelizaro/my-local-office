@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatTarget, Models, OfficeEvent, OfficeState } from './types';
+import type { ChatTarget, Models, OfficeEvent, OfficeState, Task } from './types';
 
 export async function api<T = unknown>(method: string, url: string, body?: unknown): Promise<T> {
   const r = await fetch(url, {
@@ -46,7 +46,7 @@ type Store = {
   panelTab: PanelTab;
   chat: Record<number, ChatTarget>; // conversa aberta por funcionário
   models: Models | null;
-  newTask: { employeeId?: number } | null; // modal de nova tarefa aberto
+  newTask: { employeeId?: number; task?: Task } | null; // modal de nova tarefa (ou edição de `task`) aberto
   inbox: boolean;
   palette: boolean;
   taskView: TaskView | null; // null: escolhe pela situação ao abrir
@@ -108,6 +108,7 @@ export const setPanelTab = (panelTab: PanelTab) => set({ panelTab });
 export const openTasks = (taskView: TaskView) => set({ taskView, tab: 'tasks' });
 export const openConfig = (configSection: ConfigSection) => set({ configSection, tab: 'config' });
 export const openNewTask = (employeeId?: number) => set({ newTask: { employeeId }, palette: false });
+export const openEditTask = (task: Task) => set({ newTask: { employeeId: task.employee_id, task }, palette: false });
 export const closeNewTask = () => set({ newTask: null });
 export const setInbox = (inbox: boolean) => set({ inbox, palette: false });
 export const setPalette = (palette: boolean) => set({ palette });

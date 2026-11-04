@@ -501,10 +501,8 @@ type TaskInput = {
   precheck?: string | null;
 };
 
-export function createTask(b: TaskInput) {
-  if (!employee(Number(b.employeeId))) throw new HttpError(404, 'funcionário não encontrado');
-  const origin = b.origin ?? 'user';
-  const needsApproval = origin === 'agent' && settings().delegationNeedsApproval;
+// Quando roda: runAt no passado vira "agora"; série e pré-checagem só o chefe define.
+function timing(b: Omit<TaskInput, 'employeeId'>, origin: Task['origin']) {
   const every = b.repeatEvery == null || origin !== 'user' ? null : Math.trunc(Number(b.repeatEvery));
   if (every !== null && !(every >= 1)) throw new HttpError(400, 'repeatEvery deve ser em minutos (≥ 1)');
   let runAt: string | null = null;
@@ -513,6 +511,14 @@ export function createTask(b: TaskInput) {
     if (Number.isNaN(ms)) throw new HttpError(400, 'runAt inválido');
     if (ms > Date.now()) runAt = new Date(ms).toISOString();
   }
+  return { every, runAt, precheck: origin === 'user' ? b.precheck?.trim() || null : null };
+}
+
+export function createTask(b: TaskInput) {
+  if (!employee(Number(b.employeeId))) throw new HttpError(404, 'funcionário não encontrado');
+  const origin = b.origin ?? 'user';
+  const needsApproval = origin === 'agent' && settings().delegationNeedsApproval;
+  const { every, runAt, precheck: cmd } = timing(b, origin);
   const { lastInsertRowid } = run(
     'INSERT INTO tasks (employee_id, origin, from_employee_id, parent_task_id, title, body, status, resume_session_id, run_at, repeat_every, precheck) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     Number(b.employeeId),
@@ -526,8 +532,7 @@ export function createTask(b: TaskInput) {
     // Série: run_at é a âncora do ritmo, mesmo quando a primeira roda na hora.
     runAt ?? (every ? now() : null),
     every,
-    // Comando de shell: só o chefe define, nunca um agente via delegate_task.
-    origin === 'user' ? b.precheck?.trim() || null : null,
+    cmd,
   );
   // Continuação do mesmo funcionário fica na conversa da origem; o resto abre conversa nova.
   const parent = b.parentTaskId ? get<Task>('SELECT * FROM tasks WHERE id = ?', b.parentTaskId) : undefined;
@@ -588,6 +593,33 @@ export function pauseTask(id: number, paused: boolean) {
   const runAt = paused || Date.parse(t.run_at!) > Date.now() ? t.run_at : nextRunAt(t);
   run('UPDATE tasks SET status = ?, run_at = ? WHERE id = ?', status, runAt, id);
   publish('task.status', { status }, taskIds(t));
+}
+
+// Edita o que ainda não começou. Execução de série já na fila fica como está: a série segue pela próxima agendada.
+export function updateTask(id: number, b: Omit<TaskInput, 'employeeId'>) {
+  const t = get<Task>('SELECT * FROM tasks WHERE id = ?', id);
+  if (!t || !['scheduled', 'paused', 'queued'].includes(t.status) || checking.has(id)) throw new HttpError(409, 'só tasks que ainda não começaram podem ser editadas');
+  if (t.status === 'queued' && t.repeat_every) throw new HttpError(409, 'execução da série já está na fila: edite a próxima agendada');
+  const { every, runAt, precheck: cmd } = timing(b, t.origin);
+  // Série pausada continua pausada; o resto segue a regra da criação.
+  const status = t.status === 'paused' && every ? 'paused' : runAt ? 'scheduled' : 'queued';
+  run(
+    'UPDATE tasks SET title = ?, body = ?, status = ?, run_at = ?, repeat_every = ?, precheck = ? WHERE id = ?',
+    required(b.title, 'title'),
+    b.body ?? '',
+    status,
+    runAt ?? (every ? now() : null),
+    every,
+    cmd,
+    id,
+  );
+  const u = get<Task>('SELECT * FROM tasks WHERE id = ?', id)!;
+  publish('task.updated', u, taskIds(u));
+  if (status === 'queued') {
+    if (every) scheduleNext(u);
+    pump();
+  }
+  return u;
 }
 
 // O Claude Code carrega CLAUDE.md (global e do repo) sozinho, mas não AGENTS.md: vai no system prompt,

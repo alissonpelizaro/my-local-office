@@ -112,6 +112,7 @@ const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/models$/, () => models()],
   ['POST', /^\/api\/models\/refresh$/, () => refreshModels()],
   ['POST', /^\/api\/tasks$/, (b) => office.createTask({ employeeId: b.employeeId, title: b.title, body: b.body, runAt: b.runAt, repeatEvery: b.repeatEvery, precheck: b.precheck })],
+  ['PATCH', /^\/api\/tasks\/(\d+)$/, (b, [id]) => office.updateTask(Number(id), { title: b.title, body: b.body, runAt: b.runAt, repeatEvery: b.repeatEvery, precheck: b.precheck })],
   ['GET', /^\/api\/tasks\/(\d+)\/events$/, (_, [id]) => eventsOfTask(Number(id))],
   ['POST', /^\/api\/tasks\/(\d+)\/message$/, (b, [id]) => office.messageTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/followup$/, (b, [id]) => office.followupTask(Number(id), b.text)],

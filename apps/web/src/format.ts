@@ -82,6 +82,8 @@ export function describe(e: OfficeEvent): { icon: string; text: string } | null 
   switch (e.type) {
     case 'task.created':
       return { icon: '📥', text: `nova task #${d.id}: ${d.title}` };
+    case 'task.updated':
+      return { icon: '✏️', text: `task editada: ${d.title}` };
     case 'task.status':
       return { icon: d.status === 'paused' ? '⏸️' : '▶️', text: `task ${STATUS[d.status as TaskStatus]?.label ?? d.status}` };
     case 'task.finished':
