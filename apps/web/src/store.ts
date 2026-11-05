@@ -173,7 +173,7 @@ export function onOfficeEvent(fn: Listener) {
   return () => void listeners.delete(fn);
 }
 const emit = (e: OfficeEvent, replay: boolean) => listeners.forEach((fn) => fn(e, replay));
-const marker = (type: string, taskId: number): OfficeEvent => ({ id: 0, ts: new Date().toISOString(), type, employeeId: null, taskId, data: null });
+export const marker = (type: string, taskId: number): OfficeEvent => ({ id: 0, ts: new Date().toISOString(), type, employeeId: null, taskId, data: null });
 
 // Eventos que não mudam nada fora do log não precisam recarregar o estado.
 const QUIET = new Set(['agent.text', 'agent.tool', 'agent.compact', 'run.started', 'agent.activity']);

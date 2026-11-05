@@ -81,6 +81,7 @@ type Ball = { ball: Phaser.GameObjects.Arc; tween?: Phaser.Tweens.Tween };
 export class OfficeScene extends Phaser.Scene {
   onSelect: (id: number) => void = () => {};
   onBoss: () => void = () => {};
+  onReady: () => void = () => {};
 
   private ready = false;
   private incoming?: { state: OfficeState; selected: number | null };
@@ -124,6 +125,7 @@ export class OfficeScene extends Phaser.Scene {
     this.time.addEvent({ delay: 900, loop: true, callback: () => this.chars.forEach((c) => this.isScreenOn(c) && this.drawScreen(c)) });
     this.ready = true;
     this.apply();
+    this.onReady();
   }
 
   update() {

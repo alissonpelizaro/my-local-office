@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { useEffect, useRef } from 'react';
-import { onOfficeEvent, selectEmployee, useOffice } from '../store';
+import { marker, onOfficeEvent, selectEmployee, useOffice } from '../store';
 import { OfficeScene } from './OfficeScene';
 
 // Controles que a UI React usa sobre a cena.
@@ -15,6 +15,11 @@ export function OfficeCanvas({ onBoss }: { onBoss: () => void }) {
     const scene = new OfficeScene();
     scene.onSelect = (id) => selectEmployee(id);
     scene.onBoss = () => bossRef.current();
+    // Canvas montado com replay já em curso (escritório estava recolhido): o marcador de início já passou.
+    scene.onReady = () => {
+      const r = useOffice.getState().replay;
+      if (r) scene.handle(marker('replay.start', r.taskId), true);
+    };
     const game = new Phaser.Game({
       type: Phaser.AUTO,
       parent: host.current!,
@@ -41,6 +46,7 @@ export function OfficeCanvas({ onBoss }: { onBoss: () => void }) {
     return () => {
       unsubscribe();
       off();
+      officeView.fit = () => {};
       game.destroy(true);
     };
   }, []);
