@@ -162,7 +162,7 @@ Monorepo pnpm, mesmo padrão do Monnif:
 - `apps/server`: Node 22 rodando TS direto (type stripping), sem framework: `node:http`, `node:sqlite`, SSE, MCP HTTP mínimo (JSON-RPC), ponte do local-llm-hub.
 - `apps/web`: Vite + React 19 + Phaser 3.90 + Tailwind 4 + Zustand. Componentes próprios pequenos, sem shadcn. Os tipos da API ficam espelhados em `src/types.ts`, sem pacote compartilhado.
 
-Server só escuta em `127.0.0.1` e valida `Host`/`Origin`, porque ele executa agentes na sua máquina e precisa barrar DNS rebinding e CSRF. Para ficar sempre ligado (necessário para a Comunicação), usar um LaunchAgent, como no local-llm-hub.
+Server só escuta em `127.0.0.1` (ou em `OFFICE_HOST`, exigindo `OFFICE_TOKEN` de quem vem da rede) e valida `Host`/`Origin`, porque ele executa agentes na sua máquina e precisa barrar DNS rebinding e CSRF. Para ficar sempre ligado (necessário para a Comunicação), usar um LaunchAgent, como no local-llm-hub.
 
 ## Fases
 

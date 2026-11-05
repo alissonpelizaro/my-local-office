@@ -29,6 +29,8 @@ cat > "$PLIST" <<PLIST
   <dict>
     <key>PATH</key><string>$PATH</string>
     <key>HOME</key><string>$HOME</string>
+    <key>OFFICE_HOST</key><string>${OFFICE_HOST:-127.0.0.1}</string>
+    <key>OFFICE_TOKEN</key><string>${OFFICE_TOKEN:-}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -40,4 +42,4 @@ PLIST
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "My Local Office em http://127.0.0.1:4410 (logs: data/office.log)"
+echo "My Local Office em http://${OFFICE_HOST:-127.0.0.1}:4410 (logs: data/office.log)"

@@ -4,7 +4,8 @@ import path from 'node:path';
 import { countTokens, proxyMessages } from './bridge.js';
 import { eventsAfter, eventsOfTask, subscribe } from './bus.ts';
 import * as chat from './chat.ts';
-import { PORT } from './config.ts';
+import { access, SESSION_COOKIE } from './access.ts';
+import { HOST, PORT } from './config.ts';
 import { get, type Provider } from './db.ts';
 import { discover, importRepos } from './importer.ts';
 import { handleMcp } from './mcp.ts';
@@ -16,7 +17,6 @@ import { settings, updateSettings } from './settings.ts';
 
 const CONSOLE = path.resolve(import.meta.dirname, '../public/index.html');
 const WEB = path.resolve(import.meta.dirname, '../../web/dist');
-const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
@@ -124,11 +124,17 @@ const routes: [string, RegExp, Handler][] = [
 ];
 
 const server = http.createServer(async (req, res) => {
-  // Este servidor executa agentes na máquina: só aceita a própria origem (barra DNS rebinding e CSRF).
-  const origin = req.headers.origin?.replace(/^https?:\/\//, '');
-  if (!HOSTS.has(req.headers.host ?? '') || (origin && !HOSTS.has(origin))) return send(res, 403, { error: 'origem não permitida' });
-
   const url = new URL(req.url ?? '/', 'http://localhost');
+  const { host, origin, cookie } = req.headers;
+  const verdict = access({ remote: req.socket.remoteAddress, host, origin, cookie, token: url.searchParams.get('token') });
+  if (verdict === 'login') {
+    url.searchParams.delete('token');
+    res.writeHead(302, { 'set-cookie': SESSION_COOKIE, location: url.pathname + url.search });
+    return res.end();
+  }
+  if (verdict === 'forbidden') return send(res, 403, { error: 'origem não permitida' });
+  if (verdict === 'unauthorized') return send(res, 401, { error: 'abra /?token=<OFFICE_TOKEN> uma vez neste dispositivo' });
+
   const p = url.pathname;
   try {
     if (req.method === 'GET' && p === '/api/events') return streamEvents(req, res, url);
@@ -150,7 +156,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => console.log(`my-local-office em http://127.0.0.1:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`my-local-office em http://${HOST}:${PORT}`));
 
 startNotifications();
 office.releaseScheduled();
