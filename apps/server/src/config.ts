@@ -5,3 +5,5 @@ export const DELEGATION_NEEDS_APPROVAL = process.env.OFFICE_DELEGATION_APPROVAL 
 export const MAX_CONSULT_DEPTH = 2;
 export const CONSULT_TIMEOUT_MS = 30 * 60_000;
 export const PRECHECK_TIMEOUT_MS = 2 * 60_000;
+export const HOST = process.env.OFFICE_HOST || '127.0.0.1';
+export const TOKEN = process.env.OFFICE_TOKEN ?? '';

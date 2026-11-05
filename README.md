@@ -27,6 +27,10 @@ O console antigo (F0) continua em `/console`.
 | `OFFICE_MAX_CONCURRENT` | `3` | valor inicial; depois é editável na UI |
 | `OFFICE_DELEGATION_APPROVAL` | `1` | valor inicial; depois é editável na UI |
 | `OFFICE_CLAUDE_BIN` | `claude` | |
+| `OFFICE_HOST` | `127.0.0.1` | `0.0.0.0` abre para a rede local; exige `OFFICE_TOKEN` |
+| `OFFICE_TOKEN` | | 16+ caracteres. Em outro dispositivo, abra `http://<ip>:4410/?token=<token>` uma vez (vira cookie). Localhost não pede token |
+
+Acesso pela rede: `OFFICE_HOST=0.0.0.0 OFFICE_TOKEN=$(openssl rand -hex 16) pnpm install-service`. Quem tem o token roda agentes na sua máquina: só em rede confiável.
 
 ```bash
 pnpm test         # política de permissões e ponte OpenAI
