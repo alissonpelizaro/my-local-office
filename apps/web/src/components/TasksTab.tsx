@@ -68,7 +68,7 @@ export function TasksTab() {
           {list.length === 0 ? (
             q ? <Empty>Nada com “{q}” aqui.</Empty> : <EmptyView view={view} />
           ) : (
-            <div key={view} className="grid gap-2">
+            <div key={view} className="grid grid-cols-1 gap-2">
               {list.map((t, i) => (
                 <div key={t.id} className="animate-rise" style={{ animationDelay: `${Math.min(i, 12) * 25}ms` }}>
                   <TaskRow task={t} selected={selected === t.id} />

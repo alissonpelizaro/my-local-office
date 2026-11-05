@@ -75,7 +75,7 @@ function HistoryView({ employeeId }: { employeeId: number }) {
       {tasks.length > 0 && (
         <section>
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Tarefas recentes</h3>
-          <ul className="grid gap-1">
+          <ul className="grid grid-cols-1 gap-1">
             {tasks.slice(0, 12).map((t) => (
               <li key={t.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
                 <button className="min-w-0 flex-1 truncate text-left" onClick={() => openChat(employeeId, { kind: 'thread', id: t.thread_id })}>
