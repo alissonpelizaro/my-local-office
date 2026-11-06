@@ -1,0 +1,41 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+change-template: '- $TITLE (#$NUMBER)'
+change-title-escapes: '\<*_&'
+exclude-labels: [skip-changelog]
+categories:
+  - title: Features
+    labels: [feature]
+  - title: Fixes
+    labels: [fix]
+  - title: Maintenance
+    labels: [chore]
+version-resolver:
+  major:
+    labels: [breaking]
+  minor:
+    labels: [feature]
+  default: patch
+autolabeler:
+  - label: breaking
+    title: ['/^[a-z]+(\(.+\))?!:/']
+  - label: feature
+    title: ['/^feat(\(.+\))?!?:/i']
+  - label: fix
+    title: ['/^fix(\(.+\))?!?:/i']
+  - label: chore
+    title: ['/^(chore|docs|ci|build|refactor|perf|test|style)(\(.+\))?!?:/i']
+template: |
+  ## What's changed
+
+  $CHANGES
+
+  ## Install or update
+
+  macOS and Linux (Intel and Apple Silicon / ARM). Needs [Claude Code](https://docs.claude.com/claude-code) installed and logged in.
+
+  ```bash
+  curl -fsSL https://github.com/$OWNER/$REPOSITORY/releases/download/v$RESOLVED_VERSION/install.sh | bash
+  ```
+
+  Already installed? Open **Settings → About → Update now**, or run the command again.

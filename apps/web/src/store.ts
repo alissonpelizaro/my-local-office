@@ -62,6 +62,7 @@ type Store = {
   newDept: boolean;
   deptModel: number | null; // diálogo de modelo do departamento
   connected: boolean;
+  connectionLost: boolean; // a SSE caiu (ou nunca abriu por erro): só então avisa que está offline
   events: OfficeEvent[];
   tab: Tab;
   theme: Theme;
@@ -117,6 +118,7 @@ export const useOffice = create<Store>(() => ({
   newDept: false,
   deptModel: null,
   connected: false,
+  connectionLost: false,
   events: [],
   tab: 'office',
   theme: storedTheme,
@@ -262,10 +264,10 @@ export function connect() {
   let openedAt = Date.now();
   es.onopen = () => {
     openedAt = Date.now();
-    set({ connected: true });
+    set({ connected: true, connectionLost: false });
     loadModels();
   };
-  es.onerror = () => set({ connected: false });
+  es.onerror = () => set({ connected: false, connectionLost: true });
   es.onmessage = (m) => {
     const e: OfficeEvent = JSON.parse(m.data);
     const s = get();

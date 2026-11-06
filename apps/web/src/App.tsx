@@ -44,7 +44,7 @@ export function App() {
   }, []);
   const t = useT();
   const tab = useOffice((s) => s.tab);
-  const offline = useOffice((s) => s.loaded && !s.connected);
+  const offline = useOffice((s) => s.loaded && s.connectionLost);
   const loaded = useOffice((s) => s.loaded);
   const ready = useOffice((s) => s.loaded && s.officeReady);
   const updating = useOffice((s) => s.state.app.updating && s.state.app.latest);

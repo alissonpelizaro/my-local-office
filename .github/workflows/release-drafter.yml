@@ -1,0 +1,23 @@
+name: Release Drafter
+
+# Keeps a draft of the next release up to date with every merged PR and labels PRs from their
+# Conventional Commits title (feat → minor, fix/chore/docs… → patch, "!" → major).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

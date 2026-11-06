@@ -1,5 +1,6 @@
 #!/bin/bash
-# Instala o My Local Office como LaunchAgent: sobe no login e reinicia se cair (http://127.0.0.1:4410).
+# A partir do código-fonte (macOS): instala o LaunchAgent que sobe no login e reinicia se cair (http://127.0.0.1:4410).
+# Para instalar o pacote pronto (macOS e Linux), use scripts/install.sh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LABEL=local.my-local-office
@@ -40,6 +41,7 @@ cat > "$PLIST" <<PLIST
 </plist>
 PLIST
 
+chmod 600 "$PLIST" # pode conter o OFFICE_TOKEN
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "My Local Office em http://${OFFICE_HOST:-127.0.0.1}:4410 (logs: data/office.log)"

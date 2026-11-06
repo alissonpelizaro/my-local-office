@@ -1,0 +1,67 @@
+name: Release
+
+# When a release is published: build one package per platform (app + bundled Node), attach them and
+# install.sh to the release, then install the published package on macOS and Linux and check it starts.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to (re)build, e.g. v1.2.0
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .tool-versions
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: bash scripts/build-release.sh "$TAG"
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  verify:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install the published package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MLO_HOME: ${{ runner.temp }}/mlo
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p install.sh -D "$RUNNER_TEMP"
+          bash "$RUNNER_TEMP/install.sh" --version "$TAG" --no-service
+      - name: Start and check
+        env:
+          MLO_HOME: ${{ runner.temp }}/mlo
+        run: |
+          "$MLO_HOME/app/scripts/start.sh" > "$RUNNER_TEMP/office.log" 2>&1 &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:4410/api/state -o "$RUNNER_TEMP/state.json" && break; sleep 1; done
+          cat "$RUNNER_TEMP/office.log"
+          grep -q "\"version\":\"${TAG#v}\"" "$RUNNER_TEMP/state.json"
+          curl -sf http://127.0.0.1:4410/ | grep -q '<div id="root">'
+          test -f "$MLO_HOME/data/office.db"
+          echo "My Local Office ${TAG#v} installed and running on ${{ matrix.os }}"

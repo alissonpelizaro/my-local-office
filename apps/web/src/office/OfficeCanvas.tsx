@@ -47,7 +47,11 @@ export function OfficeCanvas({ onBoss }: { onBoss: () => void }) {
     const unsubscribe = useOffice.subscribe((s) => push(s));
     const off = onOfficeEvent((e, replay) => scene.handle(e, replay));
     officeView.fit = () => scene.fitView(true);
+    // Faixas que aparecem e somem (sem conexão, atualizando) mudam a altura do contêiner sem resize da janela.
+    const ro = new ResizeObserver(() => game.scale.refresh());
+    ro.observe(host.current!);
     return () => {
+      ro.disconnect();
       clearTimeout(fallback);
       unsubscribe();
       off();
