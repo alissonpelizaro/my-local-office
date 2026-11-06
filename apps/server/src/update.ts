@@ -64,14 +64,27 @@ export async function checkUpdate() {
   return updateInfo();
 }
 
-export function startUpdate() {
+// O instalador da versão nova (correções nele valem já nesta atualização); sem acesso ao asset, o desta versão.
+// Sempre uma cópia fora do app: o script substitui a pasta onde o instalado está.
+async function installer(tag: string) {
+  const file = path.join(os.tmpdir(), `my-local-office-update-${Date.now()}.sh`);
+  try {
+    const r = await fetch(`https://github.com/${REPO}/releases/download/${tag}/install.sh`, { signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    fs.writeFileSync(file, await r.text());
+  } catch {
+    fs.copyFileSync(INSTALLER, file);
+  }
+  return file;
+}
+
+export async function startUpdate() {
   const status = (s: number, m: string) => Object.assign(new Error(m), { status: s });
   if (!info.canUpdate) throw status(400, msg().updateUnavailable);
   if (info.updating) throw status(409, msg().updateRunning);
   if (!info.latest || !newer(info.latest, info.version)) throw status(409, msg().upToDate);
-  // O script substitui a pasta onde ele mesmo está: roda uma cópia.
-  const script = path.join(os.tmpdir(), `my-local-office-update-${Date.now()}.sh`);
-  fs.copyFileSync(INSTALLER, script);
+  info.updating = true;
+  const script = await installer(`v${info.latest}`);
   const log = fs.openSync(path.join(DATA, 'update.log'), 'a');
   const args = [script, '--version', `v${info.latest}`];
   // systemd mata o cgroup inteiro do serviço ao reiniciar: o script sai dele com systemd-run.

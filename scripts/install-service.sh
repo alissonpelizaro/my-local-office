@@ -43,5 +43,11 @@ PLIST
 
 chmod 600 "$PLIST" # pode conter o OFFICE_TOKEN
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+# bootout volta antes de o launchd desmontar o job; bootstrap cedo demais falha com "Input/output error".
+for _ in $(seq 40); do launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break; sleep 0.25; done
+for attempt in 1 2 3 4 5; do
+  launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null && break
+  [ "$attempt" = 5 ] && launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  sleep 1
+done
 echo "My Local Office em http://${OFFICE_HOST:-127.0.0.1}:4410 (logs: data/office.log)"
