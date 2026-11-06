@@ -152,6 +152,16 @@ dialog.drawer[data-closing] {
   animation: slide-out 0.22s ease-in both;
 }
 
+/* Tela de carregamento: andares do prédio descem e encaixam em sequência. */
+.loader-floor {
+  animation: floor-drop 2.4s var(--ease-spring) infinite both;
+}
+@keyframes floor-drop {
+  0% { opacity: 0; transform: translateY(-16px); }
+  18%, 78% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: none; }
+}
+
 .toast-leave {
   animation: slide-out 0.22s ease-in both;
 }

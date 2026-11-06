@@ -1,4 +1,5 @@
 // Plantas das salas de descompressão: móveis e lugares onde os ociosos ficam, em coordenadas locais da sala.
+import type { IconName } from '../components/icons';
 export type Floor = 'wood' | 'carpet' | 'tile' | 'grass';
 
 // Âncora (ax, ay): quanto do espaço extra da sala esticada o móvel acompanha. 0 fica junto da parede
@@ -16,7 +17,7 @@ export type Item = Anchor & {
 };
 
 // face: 'back' quando o que interessa (TV, estante, balcão) está atrás do personagem.
-export type Spot = Anchor & { x: number; y: number; icon: string; pair?: string; face?: 'front' | 'back' };
+export type Spot = Anchor & { x: number; y: number; icon: IconName; pair?: string; face?: 'front' | 'back' };
 
 // A porta fica no tile do meio (floor(w / 2)), na parede da frente ou na de trás conforme o lado do corredor:
 // esse tile tem que ficar livre junto das duas paredes. Esticada, a porta anda junto com a âncora 0,5.
@@ -56,12 +57,12 @@ export const LEISURE: Blueprint[] = [
       { t: 'plant', x: 0.25, y: 4.35, ay: 1 },
     ],
     spots: [
-      { x: 1.4, y: 1.5, icon: '☕', face: 'back' },
-      { x: 2.5, y: 1.5, icon: '☕', face: 'back' },
-      { x: 5.45, y: 1.4, icon: '💧', face: 'back', ax: 1 },
-      { x: 1.6, y: 3.5, icon: '🍪', ...C },
-      { x: 3.6, y: 3.5, icon: '☕', ...C },
-      { x: 3.2, y: 2.2, icon: '💬', ...C },
+      { x: 1.4, y: 1.5, icon: 'coffee', face: 'back' },
+      { x: 2.5, y: 1.5, icon: 'coffee', face: 'back' },
+      { x: 5.45, y: 1.4, icon: 'droplet', face: 'back', ax: 1 },
+      { x: 1.6, y: 3.5, icon: 'cookie', ...C },
+      { x: 3.6, y: 3.5, icon: 'coffee', ...C },
+      { x: 3.2, y: 2.2, icon: 'messages', ...C },
     ],
   },
   {
@@ -83,12 +84,12 @@ export const LEISURE: Blueprint[] = [
       { t: 'plant', x: 6.4, y: 4.35, ax: 1, ay: 1 },
     ],
     spots: [
-      { x: 1.05, y: 2.5, icon: '🎮', face: 'back' },
-      { x: 2.2, y: 2.6, icon: '🎮', face: 'back' },
-      { x: 4.7, y: 1.35, icon: '🕹️', face: 'back', ax: 1 },
-      { x: 5.85, y: 1.35, icon: '🕹️', face: 'back', ax: 1 },
-      { x: 1.85, y: 3.35, icon: '🏓', pair: 'pingpong', ...C },
-      { x: 5.35, y: 3.35, icon: '🏓', pair: 'pingpong', face: 'back', ...C },
+      { x: 1.05, y: 2.5, icon: 'gamepad', face: 'back' },
+      { x: 2.2, y: 2.6, icon: 'gamepad', face: 'back' },
+      { x: 4.7, y: 1.35, icon: 'joystick', face: 'back', ax: 1 },
+      { x: 5.85, y: 1.35, icon: 'joystick', face: 'back', ax: 1 },
+      { x: 1.85, y: 3.35, icon: 'pingpong', pair: 'pingpong', ...C },
+      { x: 5.35, y: 3.35, icon: 'pingpong', pair: 'pingpong', face: 'back', ...C },
     ],
   },
   {
@@ -114,13 +115,13 @@ export const LEISURE: Blueprint[] = [
       { t: 'tree', x: 6.9, y: 5.0, ax: 1, ay: 1 },
     ],
     spots: [
-      { x: 2.65, y: 3.05, icon: '🌳', ...C },
-      { x: 5.35, y: 3.1, icon: '🌳', face: 'back', ...C },
-      { x: 4.0, y: 1.55, icon: '⛲', ...C },
-      { x: 2.0, y: 4.4, icon: '🌿', ay: 1 },
-      { x: 6.0, y: 4.2, icon: '🌼', ax: 1, ay: 1 },
-      { x: 5.8, y: 1.7, icon: '🦋', ...C },
-      { x: 3.4, y: 4.6, icon: '🌿', ax: 0.5, ay: 1 },
+      { x: 2.65, y: 3.05, icon: 'tree', ...C },
+      { x: 5.35, y: 3.1, icon: 'tree', face: 'back', ...C },
+      { x: 4.0, y: 1.55, icon: 'droplets', ...C },
+      { x: 2.0, y: 4.4, icon: 'leaf', ay: 1 },
+      { x: 6.0, y: 4.2, icon: 'flower', ax: 1, ay: 1 },
+      { x: 5.8, y: 1.7, icon: 'sparkles', ...C },
+      { x: 3.4, y: 4.6, icon: 'leaf', ax: 0.5, ay: 1 },
     ],
   },
   {
@@ -143,10 +144,10 @@ export const LEISURE: Blueprint[] = [
       { t: 'plant', x: 0.25, y: 4.4, ay: 1 },
     ],
     spots: [
-      { x: 1.75, y: 3.4, icon: '📚', ...C },
-      { x: 3.55, y: 3.6, icon: '📚', ...C },
-      { x: 1.1, y: 1.2, icon: '📖', face: 'back' },
-      { x: 3.9, y: 1.1, icon: '📖', face: 'back', ax: 1 },
+      { x: 1.75, y: 3.4, icon: 'library', ...C },
+      { x: 3.55, y: 3.6, icon: 'library', ...C },
+      { x: 1.1, y: 1.2, icon: 'book', face: 'back' },
+      { x: 3.9, y: 1.1, icon: 'book', face: 'back', ax: 1 },
     ],
   },
 ];

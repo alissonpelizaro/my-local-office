@@ -127,7 +127,7 @@ export function startRun(o: StartRun): Run {
     if (m.type === 'system' && m.subtype === 'init') {
       sessionId = m.session_id;
       runModel = m.model ?? null;
-      publish('run.started', { kind: o.kind, sessionId, model: m.model, provider: provider?.name ?? 'nativo' }, ids);
+      publish('run.started', { kind: o.kind, sessionId, model: m.model, provider: provider?.name ?? null }, ids);
     } else if (m.type === 'system' && m.subtype === 'compact_boundary') {
       publish('agent.compact', { kind: o.kind, trigger: m.compact_metadata?.trigger, preTokens: m.compact_metadata?.pre_tokens }, ids);
     } else if (m.type === 'assistant') {

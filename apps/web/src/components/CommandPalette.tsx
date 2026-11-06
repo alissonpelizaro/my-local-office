@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { names } from '../format';
-import { openChat, openConfig, openNewTask, openTask, openTasks, setInbox, setPalette, setTab, setTheme, useOffice } from '../store';
+import { openChat, openConfig, openHire, openNewDept, openNewTask, openTask, openTasks, setInbox, setPalette, setTab, setTheme, useOffice, useT } from '../store';
 import { Avatar, cx, Kbd, Modal } from './ui';
 import { Icon, type IconName } from './icons';
 
 type Cmd = { id: string; label: string; hint?: string; icon: IconName; node?: React.ReactNode; run: () => void };
 
 export function CommandPalette() {
+  const t = useT();
   const open = useOffice((s) => s.palette);
   const state = useOffice((s) => s.state);
   const name = names(state);
@@ -30,21 +31,23 @@ export function CommandPalette() {
     };
     const color = (id: number) => state.departments.find((d) => d.id === state.employees.find((e) => e.id === id)?.department_id)?.color ?? '#999';
     return [
-      { id: 'new', label: 'Nova tarefa', hint: 'N', icon: 'plus', run: go(() => openNewTask()) },
-      { id: 'inbox', label: 'Abrir pedidos', icon: 'bell', run: go(() => setInbox(true)) },
-      { id: 'office', label: 'Ir para o Escritório', icon: 'building', run: go(() => setTab('office')) },
-      { id: 'tasks', label: 'Tarefas ativas', icon: 'list', run: go(() => openTasks('active')) },
-      { id: 'planned', label: 'Tarefas planejadas', icon: 'calendar', run: go(() => openTasks('planned')) },
-      { id: 'costs', label: 'Ver custos', icon: 'chart', run: go(() => setTab('costs')) },
-      { id: 'team', label: 'Gerenciar equipe', icon: 'users', run: go(() => openConfig('team')) },
-      { id: 'import', label: 'Importar repositórios', icon: 'download', run: go(() => openConfig('import')) },
-      { id: 'theme-dark', label: 'Tema escuro', icon: 'moon', run: go(() => setTheme('dark')) },
-      { id: 'theme-light', label: 'Tema claro', icon: 'sun', run: go(() => setTheme('light')) },
+      { id: 'new', label: t.palette.newTask, hint: 'N', icon: 'plus', run: go(() => openNewTask()) },
+      { id: 'inbox', label: t.palette.requests, icon: 'bell', run: go(() => setInbox(true)) },
+      { id: 'office', label: t.palette.office, icon: 'building', run: go(() => setTab('office')) },
+      { id: 'tasks', label: t.palette.active, icon: 'list', run: go(() => openTasks('active')) },
+      { id: 'planned', label: t.palette.planned, icon: 'calendar', run: go(() => openTasks('planned')) },
+      { id: 'costs', label: t.palette.costs, icon: 'chart', run: go(() => setTab('costs')) },
+      { id: 'team', label: t.palette.team, icon: 'users', run: go(() => openConfig('team')) },
+      { id: 'hire', label: t.palette.hire, icon: 'userPlus', run: go(() => openHire()) },
+      { id: 'dept', label: t.palette.newDept, icon: 'folderPlus', run: go(() => openNewDept()) },
+      { id: 'import', label: t.palette.import, icon: 'download', run: go(() => openConfig('import')) },
+      { id: 'theme-dark', label: t.palette.dark, icon: 'moon', run: go(() => setTheme('dark')) },
+      { id: 'theme-light', label: t.palette.light, icon: 'sun', run: go(() => setTheme('light')) },
       ...state.employees.map(
         (e): Cmd => ({
           id: `emp-${e.id}`,
           label: e.name,
-          hint: 'conversa',
+          hint: t.palette.conversation,
           icon: 'message',
           node: <Avatar name={e.name} color={color(e.id)} size="sm" activity={e.activity} />,
           run: go(() => openChat(e.id, { kind: 'new' })),
@@ -54,9 +57,9 @@ export function CommandPalette() {
       ...state.tasks
         .filter((t, i, all) => !t.repeat_every || all.findIndex((x) => x.thread_id === t.thread_id) === i)
         .slice(0, 40)
-        .map((t): Cmd => ({ id: `task-${t.id}`, label: t.title, hint: `#${t.id} · ${name(t.employee_id)}`, icon: t.repeat_every ? 'repeat' : 'list', run: go(() => openTask(t.id)) })),
+        .map((x): Cmd => ({ id: `task-${x.id}`, label: x.title, hint: `#${x.id} · ${name(x.employee_id)}`, icon: x.repeat_every ? 'repeat' : 'list', run: go(() => openTask(x.id)) })),
     ];
-  }, [state, name]);
+  }, [state, name, t]);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -85,13 +88,13 @@ export function CommandPalette() {
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar funcionário, tarefa ou ação…"
+            placeholder={t.palette.placeholder}
             className="h-13 flex-1 bg-transparent text-[15px] outline-none placeholder:text-zinc-400"
           />
           <Kbd>esc</Kbd>
         </div>
         <div ref={listRef} className="max-h-[52vh] overflow-y-auto p-2">
-          {filtered.length === 0 && <p className="px-3 py-6 text-center text-sm text-zinc-500">Nada encontrado.</p>}
+          {filtered.length === 0 && <p className="px-3 py-6 text-center text-sm text-zinc-500">{t.palette.nothing}</p>}
           {filtered.map((c, i) => (
             <button
               key={c.id}

@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { describe, names, time } from '../format';
-import { useOffice } from '../store';
+import { useOffice, useT } from '../store';
+import { Icon } from './icons';
 import type { OfficeEvent } from '../types';
 import { cx, Empty } from './ui';
 
 // Log com autoscroll enquanto o usuário estiver no fim.
 export function EventLog({ events, showWho = true, className }: { events: OfficeEvent[]; showWho?: boolean; className?: string }) {
+  const t = useT();
   const name = names(useOffice((s) => s.state));
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -27,11 +29,11 @@ export function EventLog({ events, showWho = true, className }: { events: Office
       }}
       className={cx('overflow-y-auto text-xs', className)}
     >
-      {rows.length === 0 && <Empty>Sem atividade ainda.</Empty>}
-      {rows.map(({ e, icon, text }) => (
+      {rows.length === 0 && <Empty>{t.log.empty}</Empty>}
+      {rows.map(({ e, icon, text, tone }) => (
         <div key={e.id} className="flex animate-fade-in gap-2 rounded-md px-1.5 py-1 leading-relaxed transition-colors hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.03]">
           <span className="shrink-0 font-mono text-[11px] text-zinc-400 tabular-nums">{time(e.ts)}</span>
-          <span className="shrink-0">{icon}</span>
+          <Icon name={icon} className={cx('mt-0.5 h-3.5 w-3.5', tone === 'red' ? 'text-red-500' : tone === 'green' ? 'text-emerald-500' : 'text-zinc-400')} />
           <span className="line-clamp-4 min-w-0 whitespace-pre-wrap text-zinc-600 [overflow-wrap:anywhere] dark:text-zinc-400">
             {showWho && <b className="mr-1 font-medium text-zinc-900 dark:text-zinc-200">{name(e.employeeId)}</b>}
             {text.length > 700 ? `${text.slice(0, 700)}…` : text}
