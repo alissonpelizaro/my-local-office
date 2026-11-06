@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { all, type Department, type Employee, get } from './db.ts';
 import { git } from './git.ts';
+import { msg } from './i18n.ts';
 import { createDepartment, createEmployee, HttpError } from './office.ts';
 
 const expand = (p: string) => p.replace(/^~(?=\/|$)/, os.homedir());
@@ -30,12 +31,12 @@ export function discover(root: string): { root: string; repos: DiscoveredRepo[] 
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    throw new HttpError(400, `não consegui ler ${dir}`);
+    throw new HttpError(400, msg().cannotRead(dir));
   }
   const employees = all<Employee>('SELECT * FROM employees');
   const depts = all<Department>('SELECT * FROM departments');
-  // Departamento organizado por org (LYNN ← totvs-ai/*) puxa os repos irmãos. Departamento nomeado pelo projeto
-  // (Monnif ← monnif*) só puxa por prefixo, senão levaria junto todos os repos pessoais da mesma conta.
+  // Departamento organizado por org (Platform ← acme/*) puxa os repos irmãos. Departamento nomeado pelo projeto
+  // (Billing ← billing*) só puxa por prefixo, senão levaria junto todos os repos pessoais da mesma conta.
   const orgDept = new Map<string, string>();
   for (const e of employees) {
     const org = parseRemote(e.git_remote)?.org;
@@ -62,11 +63,11 @@ export function discover(root: string): { root: string; repos: DiscoveredRepo[] 
       repo: parsed?.repo ?? null,
       employedAs: employed?.name ?? null,
       duplicateOf: null,
-      suggestedDepartment: byPrefix?.name ?? (parsed && orgDept.get(parsed.org)) ?? parsed?.org ?? 'Outros',
+      suggestedDepartment: byPrefix?.name ?? (parsed && orgDept.get(parsed.org)) ?? parsed?.org ?? 'Other',
     });
   }
 
-  // Clones/worktrees do mesmo remote viram um funcionário só: fica a pasta com o nome do repo (monnif, não monnif-assistente).
+  // Clones/worktrees do mesmo remote viram um funcionário só: fica a pasta com o nome do repo (billing, não billing-old).
   const byRemote = Map.groupBy(repos.filter((r) => r.remote), (r) => r.remote!);
   for (const group of byRemote.values()) {
     if (group.length < 2) continue;
@@ -77,10 +78,10 @@ export function discover(root: string): { root: string; repos: DiscoveredRepo[] 
 }
 
 export function importRepos(items: { repoPath: string; department: string }[]) {
-  if (!Array.isArray(items) || !items.length) throw new HttpError(400, 'nada para importar');
+  if (!Array.isArray(items) || !items.length) throw new HttpError(400, msg().nothingToImport);
   return items.map(({ repoPath, department }) => {
     try {
-      const name = String(department ?? '').trim() || 'Outros';
+      const name = String(department ?? '').trim() || 'Other';
       const dept = get<Department>('SELECT * FROM departments WHERE name = ? COLLATE NOCASE', name) ?? createDepartment({ name })!;
       const e = createEmployee({ departmentId: dept.id, repoPath });
       return { repoPath, ok: true, employee: e.name };

@@ -19,6 +19,7 @@ export type Employee = {
   max_parallel: number;
   profile_source: 'auto' | 'manual';
   connectors: number;
+  kind: 'repo' | 'intern';
   activity: Activity;
 };
 
@@ -94,6 +95,8 @@ export type Approval = ApprovalBase &
   ({ kind: 'tool'; payload: ToolPayload } | { kind: 'question'; payload: QuestionPayload } | { kind: 'delegation'; payload: DelegationPayload });
 
 export type Settings = {
+  language: string;
+  onboardingDone: boolean;
   maxConcurrent: number;
   delegationNeedsApproval: boolean;
   defaultModel: string;
@@ -117,7 +120,19 @@ export type Costs = {
   byDay: { day: string; total: number }[];
 };
 
+export type AppInfo = {
+  version: string;
+  latest: string | null;
+  releaseUrl: string | null;
+  checkedAt: string | null;
+  canUpdate: boolean;
+  updating: boolean;
+  error: string | null;
+  available: boolean;
+};
+
 export type OfficeState = {
+  app: AppInfo;
   departments: Department[];
   employees: Employee[];
   providers: Provider[];

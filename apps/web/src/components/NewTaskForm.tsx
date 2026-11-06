@@ -1,25 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { clock, everyLabel, titleOf, when } from '../format';
-import { act, api, openChat, useOffice, toast } from '../store';
+import { act, api, openChat, toast, useOffice, useT } from '../store';
 import type { Task } from '../types';
 import { Icon } from './icons';
-import { Avatar, Button, cx, Field, Input, Kbd, Segmented, Textarea } from './ui';
+import { Avatar, Button, cx, Field, Input, Kbd, Rich, Segmented, Textarea } from './ui';
 
 type Mode = 'now' | 'at' | 'repeat';
 
-const PRESETS: [number, string][] = [
-  [5, '5 min'],
-  [15, '15 min'],
-  [30, '30 min'],
-  [60, '1 h'],
-  [240, '4 h'],
-  [1440, '1 dia'],
-];
+const PRESETS = [
+  [5, 'm5'],
+  [15, 'm15'],
+  [30, 'm30'],
+  [60, 'h1'],
+  [240, 'h4'],
+  [1440, 'd1'],
+] as const;
 const UNITS = [
   { value: 1, label: 'min' },
-  { value: 60, label: 'horas' },
-  { value: 1440, label: 'dias' },
-];
+  { value: 60, label: 'hours' },
+  { value: 1440, label: 'days' },
+] as const;
 
 // Valor de <input type="datetime-local"> no fuso local.
 const localInput = (ms: number) => new Date(ms - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
@@ -32,6 +32,7 @@ export const editable = (t: Task) =>
 
 // Com `task`, edita a tarefa (sem trocar o funcionário).
 export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number; task?: Task; onDone?: () => void }) {
+  const t = useT();
   const employees = useOffice((s) => s.state.employees);
   const departments = useOffice((s) => s.state.departments);
   const [to, setTo] = useState<number | null>(employeeId ?? (employees.length === 1 ? employees[0].id : null));
@@ -70,13 +71,13 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
       repeatEvery: mode === 'repeat' ? every : undefined,
       precheck: mode === 'repeat' ? precheck.trim() || undefined : undefined,
     };
-    const t = await act(() => (task ? api<Task>('PATCH', `/api/tasks/${task.id}`, b) : api<Task>('POST', '/api/tasks', { employeeId: to, ...b })));
+    const r = await act(() => (task ? api<Task>('PATCH', `/api/tasks/${task.id}`, b) : api<Task>('POST', '/api/tasks', { employeeId: to, ...b })));
     setBusy(false);
-    if (!t) return;
+    if (!r) return;
     const what = task
-      ? 'Tarefa atualizada'
-      : mode === 'repeat' ? `Série criada: ${everyLabel(every)}` : scheduled && !past ? `Agendada para ${when(startMs)}` : 'Tarefa enviada';
-    toast(`${what} · ${name}`, 'success', { label: 'Abrir conversa', run: () => openChat(t.employee_id, { kind: 'thread', id: t.thread_id }) });
+      ? t.newTask.updated
+      : mode === 'repeat' ? t.newTask.seriesCreated(everyLabel(every)) : scheduled && !past ? t.newTask.scheduledFor(when(startMs)) : t.newTask.sent;
+    toast(`${what} · ${name}`, 'success', { label: t.tasks.openChat, run: () => openChat(r.employee_id, { kind: 'thread', id: r.thread_id }) });
     onDone?.();
   };
 
@@ -94,8 +95,8 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
         }
       }}
     >
-      <Field group label="Para quem" hint={!to && employees.length > 0 ? 'Escolha quem vai fazer.' : undefined}>
-        {!task && employees.length > 8 && <Input placeholder="Filtrar funcionários…" value={filter} onChange={(e) => setFilter(e.target.value)} />}
+      <Field group label={t.newTask.to} hint={!to && employees.length > 0 ? t.newTask.pickHint : undefined}>
+        {!task && employees.length > 8 && <Input placeholder={t.newTask.filter} value={filter} onChange={(e) => setFilter(e.target.value)} />}
         <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto p-0.5">
           {shown.map((e) => {
             const on = to === e.id;
@@ -115,44 +116,45 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
               >
                 <Avatar name={e.name} color={color(e.department_id)} size="xs" />
                 {e.name}
+                {e.kind === 'intern' && <Icon name="intern" className="h-3.5 w-3.5 text-violet-500" />}
                 {on && <Icon name="check" className="h-3.5 w-3.5 animate-pop" />}
               </button>
             );
           })}
-          {employees.length === 0 && <span className="text-sm text-zinc-500">Ninguém contratado ainda. Importe repositórios em Config.</span>}
-          {employees.length > 0 && shown.length === 0 && <span className="text-sm text-zinc-500">Ninguém com esse nome.</span>}
+          {employees.length === 0 && <span className="text-sm text-zinc-500">{t.newTask.nobody}</span>}
+          {employees.length > 0 && shown.length === 0 && <span className="text-sm text-zinc-500">{t.newTask.noMatch}</span>}
         </div>
       </Field>
 
-      <Field label="O que fazer" hint={text.trim() ? <>Título: <b className="font-medium text-zinc-600 dark:text-zinc-300">{titleOf(text)}</b></> : 'A primeira linha vira o título; o resto é contexto e critério de pronto.'}>
+      <Field label={t.newTask.what} hint={text.trim() ? <Rich text={t.newTask.titlePreview(titleOf(text))} /> : t.newTask.whatHint}>
         <Textarea
           ref={textRef}
           rows={4}
-          placeholder={'Ex.: Verificar PRs abertos e avisar se algum quebrou o build\nOlhe só os do último dia.'}
+          placeholder={t.newTask.placeholder}
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
       </Field>
 
       <div className="grid gap-3">
-        <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Quando</span>
+        <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.newTask.when}</span>
         <Segmented
           value={mode}
           onChange={setMode}
           className="w-full [&>button]:flex-1"
           options={[
-            { value: 'now', label: 'Agora', icon: 'zap' },
-            { value: 'at', label: 'Agendar', icon: 'calendar' },
-            { value: 'repeat', label: 'Repetir', icon: 'repeat' },
+            { value: 'now', label: t.newTask.now, icon: 'zap' },
+            { value: 'at', label: t.newTask.schedule, icon: 'calendar' },
+            { value: 'repeat', label: t.newTask.repeat, icon: 'repeat' },
           ]}
         />
 
         {mode === 'at' && (
           <div key="at" className="flex animate-rise flex-wrap items-center gap-1.5">
             {[
-              { label: 'Em 15 min', ms: roundedFuture(15) },
-              { label: 'Em 1 h', ms: roundedFuture(60) },
-              { label: 'Amanhã 9h', ms: new Date(new Date().setHours(33, 0, 0, 0)).getTime() },
+              { label: t.newTask.in15, ms: roundedFuture(15) },
+              { label: t.newTask.in1h, ms: roundedFuture(60) },
+              { label: t.newTask.tomorrow9, ms: new Date(new Date().setHours(33, 0, 0, 0)).getTime() },
             ].map((q) => (
               <QuickChip key={q.label} on={at === localInput(q.ms)} onClick={() => setAt(localInput(q.ms))}>
                 {q.label}
@@ -175,11 +177,11 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
                     setAmount(m / u);
                   }}
                 >
-                  {label}
+                  {t.newTask.presets[label]}
                 </QuickChip>
               ))}
               <span className="ml-1 inline-flex items-center gap-1.5 text-sm text-zinc-500">
-                ou a cada
+                {t.newTask.orEvery}
                 <input
                   type="number"
                   min={1}
@@ -194,7 +196,7 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
                 >
                   {UNITS.map((u) => (
                     <option key={u.value} value={u.value}>
-                      {u.label}
+                      {t.newTask.units[u.label]}
                     </option>
                   ))}
                 </select>
@@ -206,14 +208,14 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
                 value={startNow ? 'now' : 'at'}
                 onChange={(v) => setStartNow(v === 'now')}
                 options={[
-                  { value: 'now', label: 'Começar agora' },
-                  { value: 'at', label: 'Começar em…' },
+                  { value: 'now', label: t.newTask.startNow },
+                  { value: 'at', label: t.newTask.startAt },
                 ]}
               />
               {!startNow && <DateTime value={at} onChange={setAt} />}
             </div>
-            <Field label="Pré-checagem (opcional)" hint="Comando de shell no repo antes de cada execução. Sem saída, encerra sem chamar o agente; com saída, ela vai no prompt.">
-              <Input className="font-mono" placeholder="Ex.: ~/.local/bin/pr-pendencias" value={precheck} onChange={(e) => setPrecheck(e.target.value)} />
+            <Field label={t.newTask.precheck} hint={t.newTask.precheckHint}>
+              <Input className="font-mono" placeholder={t.newTask.precheckPlaceholder} value={precheck} onChange={(e) => setPrecheck(e.target.value)} />
             </Field>
           </div>
         )}
@@ -223,15 +225,15 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
 
       <div className="flex items-center justify-end gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-800">
         <span className="mr-auto hidden text-xs text-zinc-400 sm:inline">
-          <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> {task ? 'salva' : 'cria'}
+          <Kbd>⌘</Kbd> <Kbd>Enter</Kbd> {task ? t.newTask.saves : t.newTask.creates}
         </span>
         {onDone && (
           <Button type="button" variant="ghost" onClick={onDone}>
-            Cancelar
+            {t.common.cancel}
           </Button>
         )}
         <Button type="submit" variant="primary" icon={task ? 'check' : mode === 'repeat' ? 'repeat' : scheduled ? 'calendar' : 'arrowUp'} busy={busy} disabled={!ready}>
-          {task ? 'Salvar' : mode === 'repeat' ? 'Criar repetição' : scheduled && !past ? 'Agendar' : 'Começar agora'}
+          {task ? t.common.save : mode === 'repeat' ? t.newTask.createRepeat : scheduled && !past ? t.newTask.schedule : t.newTask.startNow}
         </Button>
       </div>
     </form>
@@ -240,31 +242,30 @@ export function NewTaskForm({ employeeId, task, onDone }: { employeeId?: number;
 
 // Frase do que vai acontecer, com os próximos horários da série.
 function Preview({ mode, startMs, past, every, name }: { mode: Mode; startMs: number; past: boolean; every: number; name?: string }) {
-  const who = name ?? 'o funcionário';
+  const t = useT();
+  const who = name ?? t.newTask.theEmployee;
   const start = past ? Date.now() : startMs;
   let icon: 'zap' | 'calendar' | 'repeat' = 'zap';
-  let text: React.ReactNode = <>Entra na fila agora e começa assim que {who} estiver livre.</>;
+  let text = t.newTask.queuedNow(who);
   let next: number[] = [];
   if (mode === 'at') {
     icon = 'calendar';
-    text = past ? <>Esse horário já passou: começa agora.</> : <>Começa {when(startMs)}.</>;
+    text = past ? t.newTask.pastStartsNow : t.newTask.startsAt(when(startMs));
   } else if (mode === 'repeat') {
     icon = 'repeat';
-    text = (
-      <>
-        Roda {startMs <= Date.now() + 30_000 ? 'agora' : when(startMs)} e depois <b className="font-semibold">{everyLabel(every)}</b>, até você encerrar.
-      </>
-    );
+    text = t.newTask.runs(startMs <= Date.now() + 30_000 ? t.time.now : when(startMs), everyLabel(every));
     next = [1, 2, 3].map((i) => start + i * every * 60_000);
   }
   return (
     <div key={mode} className="flex animate-fade-in gap-2.5 rounded-xl bg-zinc-900/[0.035] p-3 text-sm text-zinc-600 dark:bg-white/[0.04] dark:text-zinc-300">
       <Icon name={icon} className="mt-0.5 h-4 w-4 text-blue-600 dark:text-blue-400" />
       <div className="grid gap-1.5">
-        <p>{text}</p>
+        <p>
+          <Rich text={text} />
+        </p>
         {next.length > 0 && (
           <div className="flex flex-wrap items-center gap-1 text-xs text-zinc-500">
-            Próximas:
+            {t.newTask.upcoming}
             {next.map((ms) => (
               <span key={ms} className="rounded-md bg-white px-1.5 py-0.5 font-medium tabular-nums shadow-xs dark:bg-zinc-800">
                 {every >= 1440 ? when(ms) : clock(ms)}
@@ -275,10 +276,10 @@ function Preview({ mode, startMs, past, every, name }: { mode: Mode; startMs: nu
         )}
         {mode === 'repeat' && every < 10 && (
           <p className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
-            <Icon name="alert" className="h-3.5 w-3.5" /> Intervalo curto: cada execução consome o limite da assinatura.
+            <Icon name="alert" className="h-3.5 w-3.5" /> {t.newTask.shortInterval}
           </p>
         )}
-        {mode === 'repeat' && <p className="text-xs text-zinc-500">Só avisa no macOS se uma execução falhar. Se a anterior ainda estiver na fila, o horário é pulado.</p>}
+        {mode === 'repeat' && <p className="text-xs text-zinc-500">{t.newTask.seriesNote}</p>}
       </div>
     </div>
   );

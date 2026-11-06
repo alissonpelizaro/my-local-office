@@ -1,8 +1,8 @@
 import { type ReactNode, useState } from 'react';
-import { act, api, openChat, useOffice } from '../store';
+import { act, api, openChat, tr, useOffice, useT } from '../store';
 import type { Approval, Question, QuestionPayload, ToolPayload } from '../types';
 import { Icon, type IconName } from './icons';
-import { Button, Chip, cx, Input } from './ui';
+import { Button, Chip, cx, Input, Rich } from './ui';
 
 type Body = { decision: string; text?: string; answers?: Record<string, string> };
 
@@ -21,7 +21,7 @@ const leave = (leaving: boolean) => cx('transition duration-200 ease-out', leavi
 export function ApprovalCard({ approval: a, compact = false }: { approval: Approval; compact?: boolean }) {
   const employee = useOffice((s) => s.state.employees.find((e) => e.id === a.employee_id));
   const thread = useOffice((s) => s.state.tasks.find((t) => t.id === a.task_id)?.thread_id);
-  const who = employee?.name ?? 'escritório';
+  const who = employee?.name ?? tr().common.office;
   // Fora da conversa (gaveta, visão geral), dá para pular direto para ela.
   const open = !compact && employee && thread ? () => openChat(employee.id, { kind: 'thread', id: thread }) : undefined;
   if (a.kind === 'question') return <QuestionCard id={a.id} who={compact ? null : who} payload={a.payload} onOpen={open} />;
@@ -30,6 +30,7 @@ export function ApprovalCard({ approval: a, compact = false }: { approval: Appro
 }
 
 function Shell({ tone, icon, title, extra, onOpen, children, footer, leaving }: { tone: 'amber' | 'red' | 'blue'; icon: IconName; title: ReactNode; extra?: ReactNode; onOpen?: () => void; children?: ReactNode; footer: ReactNode; leaving: boolean }) {
+  const tt = useT();
   const t = {
     amber: { box: 'border-amber-300/80 dark:border-amber-800/70', head: 'bg-amber-50 dark:bg-amber-950/30', icon: 'bg-amber-500' },
     red: { box: 'border-red-300 dark:border-red-900', head: 'bg-red-50 dark:bg-red-950/40', icon: 'bg-red-600' },
@@ -45,7 +46,7 @@ function Shell({ tone, icon, title, extra, onOpen, children, footer, leaving }: 
         {extra}
         {onOpen && (
           <button onClick={onOpen} className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
-            ver conversa <Icon name="chevronRight" className="h-3 w-3" />
+            {tt.approval.viewChat} <Icon name="chevronRight" className="h-3 w-3" />
           </button>
         )}
       </div>
@@ -58,24 +59,21 @@ function Shell({ tone, icon, title, extra, onOpen, children, footer, leaving }: 
 // ---------- delegação ----------
 
 function DelegationCard({ id, payload: p }: { id: number; payload: Extract<Approval, { kind: 'delegation' }>['payload'] }) {
+  const t = useT();
   const { leaving, decide } = useDecide(id);
   return (
     <Shell
       tone="amber"
       icon="arrowRight"
       leaving={leaving}
-      title={
-        <>
-          <b>{p.from ?? '?'}</b> quer delegar a <b>{p.to}</b>
-        </>
-      }
+      title={<Rich text={t.approval.wantsDelegate(p.from ?? '?', p.to)} />}
       footer={
         <>
           <Button variant="primary" size="sm" icon="check" onClick={() => decide({ decision: 'allow' })}>
-            Aprovar
+            {t.approval.approve}
           </Button>
           <Button variant="danger" size="sm" onClick={() => decide({ decision: 'deny' })}>
-            Recusar
+            {t.approval.decline}
           </Button>
         </>
       }
@@ -89,14 +87,15 @@ function DelegationCard({ id, payload: p }: { id: number; payload: Extract<Appro
 // ---------- permissão de ferramenta ----------
 
 function headline(p: ToolPayload) {
+  const t = tr().approval;
   const short = (f?: string) => f?.split('/').slice(-3).join('/');
   const mcp = p.tool.match(/^mcp__(.+?)__(.+)$/);
-  if (p.tool === 'Bash') return 'quer rodar um comando';
-  if (p.tool === 'Edit' || p.tool === 'MultiEdit') return `quer editar ${short(p.detail?.file)}`;
-  if (p.tool === 'Write') return `quer escrever ${short(p.detail?.file)}`;
-  if (p.tool === 'WebFetch') return 'quer acessar uma página';
-  if (mcp) return `quer usar ${mcp[2]} (${mcp[1].replace(/^claude_ai_/, '')})`;
-  return `quer usar ${p.tool}`;
+  if (p.tool === 'Bash') return t.runCommand;
+  if (p.tool === 'Edit' || p.tool === 'MultiEdit') return t.editFile(short(p.detail?.file) ?? '');
+  if (p.tool === 'Write') return t.writeFile(short(p.detail?.file) ?? '');
+  if (p.tool === 'WebFetch') return t.fetch;
+  if (mcp) return t.useMcp(mcp[2], mcp[1].replace(/^claude_ai_/, ''));
+  return t.useTool(p.tool);
 }
 
 function Code({ children, tone = 'plain' }: { children: string; tone?: 'plain' | 'del' | 'add' }) {
@@ -113,6 +112,7 @@ function Code({ children, tone = 'plain' }: { children: string; tone?: 'plain' |
 }
 
 function ToolCard({ id, who, payload: p, onOpen }: { id: number; who: string; payload: ToolPayload; onOpen?: () => void }) {
+  const t = useT();
   const { leaving, decide } = useDecide(id);
   const [text, setText] = useState('');
   const [denying, setDenying] = useState(false);
@@ -130,8 +130,8 @@ function ToolCard({ id, who, payload: p, onOpen }: { id: number; who: string; pa
       }
       extra={
         <>
-          {p.external && <Chip tone="red">sai da sua máquina</Chip>}
-          {p.outsideRepo && <Chip tone="amber">fora do repo</Chip>}
+          {p.external && <Chip tone="red">{t.approval.leavesMachine}</Chip>}
+          {p.outsideRepo && <Chip tone="amber">{t.approval.outsideRepo}</Chip>}
         </>
       }
       footer={
@@ -143,23 +143,23 @@ function ToolCard({ id, who, payload: p, onOpen }: { id: number; who: string; pa
               decide({ decision: 'deny', text });
             }}
           >
-            <Input autoFocus placeholder="Por quê? (o agente lê e ajusta)" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setDenying(false))} />
+            <Input autoFocus placeholder={t.approval.why} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setDenying(false))} />
             <Button type="submit" variant="solidDanger" size="md">
-              Negar
+              {t.approval.deny}
             </Button>
           </form>
         ) : (
           <>
             <Button variant="primary" size="sm" icon="check" onClick={() => decide({ decision: 'allow' })}>
-              Permitir
+              {t.approval.allow}
             </Button>
             {!p.external && p.rules?.length > 0 && (
-              <Button size="sm" title={`Libera sempre para este funcionário: ${p.rules.join(', ')}`} onClick={() => decide({ decision: 'always' })}>
-                Sempre permitir
+              <Button size="sm" title={t.approval.alwaysTitle(p.rules.join(', '))} onClick={() => decide({ decision: 'always' })}>
+                {t.approval.alwaysAllow}
               </Button>
             )}
             <Button variant="danger" size="sm" className="ml-auto" onClick={() => setDenying(true)}>
-              Negar…
+              {t.approval.denyDots}
             </Button>
           </>
         )
@@ -178,6 +178,7 @@ function ToolCard({ id, who, payload: p, onOpen }: { id: number; who: string; pa
 // ---------- pergunta do agente ----------
 
 export function QuestionCard({ id, who, payload, onOpen }: { id: number; who: string | null; payload: QuestionPayload; onOpen?: () => void }) {
+  const t = useT();
   const { leaving, decide } = useDecide(id);
   const questions: Question[] = payload.questions?.length ? payload.questions : [{ question: payload.question, options: payload.options.map((label) => ({ label })) }];
   const structured = !!payload.questions?.length;
@@ -196,16 +197,16 @@ export function QuestionCard({ id, who, payload, onOpen }: { id: number; who: st
       icon="message"
       leaving={leaving}
       onOpen={onOpen}
-      title={who ? <><b>{who}</b> pergunta</> : 'Pergunta para você'}
+      title={who ? <Rich text={t.approval.asks(who)} /> : t.approval.questionForYou}
       footer={
         <>
           {(!single || Object.values(other).some((v) => v.trim())) && (
             <Button variant="primary" size="sm" disabled={!complete} onClick={() => submit(Object.fromEntries(questions.map((q) => [q.question, answerOf(q)])))}>
-              Responder
+              {t.approval.answer}
             </Button>
           )}
           <button className="text-xs text-zinc-500 hover:text-zinc-800 hover:underline dark:hover:text-zinc-200" onClick={() => decide({ decision: 'deny' })}>
-            Prefiro responder pela conversa
+            {t.approval.answerInChat}
           </button>
         </>
       }
@@ -252,7 +253,7 @@ export function QuestionCard({ id, who, payload, onOpen }: { id: number; who: st
                 );
               })}
               <Input
-                placeholder={q.options?.length ? 'Outra resposta…' : 'Sua resposta…'}
+                placeholder={q.options?.length ? t.approval.otherAnswer : t.approval.yourAnswer}
                 value={other[q.question] ?? ''}
                 onChange={(e) => setOther((o) => ({ ...o, [q.question]: e.target.value }))}
                 onKeyDown={(e) => {

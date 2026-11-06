@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { act, api, loadModels, selectEmployee, useOffice } from '../store';
+import { act, api, loadModels, useOffice, useT } from '../store';
 import type { Employee } from '../types';
 import { Icon } from './icons';
 import { Button, Chip, ConfirmButton, Field, Input, Saved, Segmented, Select, SettingRow, Stepper, Switch, Textarea } from './ui';
@@ -14,6 +14,7 @@ export function modelName(id: string) {
 
 // Aliases acompanham a versão mais nova que o seu Claude Code conhece; a versão fixa não muda sozinha.
 export function ModelSelect({ value, onChange, allowDefault = true, emptyLabel }: { value: string; onChange: (v: string) => void; allowDefault?: boolean; emptyLabel?: string }) {
+  const t = useT();
   const models = useOffice((s) => s.models);
   const fallback = useOffice((s) => s.state.settings.defaultModel);
   const aliases = models?.aliases ?? ['opus', 'sonnet', 'haiku'].map((alias) => ({ alias, model: null }));
@@ -21,41 +22,62 @@ export function ModelSelect({ value, onChange, allowDefault = true, emptyLabel }
   const known = new Set(['', ...aliases.map((a) => a.alias), ...fixed.map((m) => m.id)]);
   return (
     <Select value={value} onChange={(e) => onChange(e.target.value)}>
-      {(allowDefault || emptyLabel) && <option value="">{emptyLabel ?? `Padrão do escritório (${fallback})`}</option>}
-      <optgroup label="Sempre o mais recente">
+      {(allowDefault || emptyLabel) && <option value="">{emptyLabel ?? t.employee.officeDefault(fallback)}</option>}
+      <optgroup label={t.employee.latest}>
         {aliases.map((a) => (
           <option key={a.alias} value={a.alias}>
             {cap(a.alias)}
-            {a.model ? ` (hoje ${modelName(a.model)})` : ''}
+            {a.model ? ` ${t.employee.todayModel(modelName(a.model))}` : ''}
           </option>
         ))}
       </optgroup>
       {fixed.length > 0 && (
-        <optgroup label="Versão fixa">
+        <optgroup label={t.employee.fixed}>
           {fixed.map((m) => (
             <option key={m.id} value={m.id} disabled={m.status !== 'ok'} title={m.note}>
               {modelName(m.id)}
-              {m.status === 'update' ? ` · atualize o Claude Code (≥ ${m.requires})` : m.status === 'unavailable' ? ' · indisponível' : ''}
+              {m.status === 'update' ? ` · ${t.employee.updateCli(m.requires ?? '')}` : m.status === 'unavailable' ? ` · ${t.employee.unavailable}` : ''}
             </option>
           ))}
         </optgroup>
       )}
-      {!known.has(value) && <option value={value}>{value} · personalizado</option>}
+      {!known.has(value) && (
+        <option value={value}>
+          {value} · {t.employee.custom}
+        </option>
+      )}
     </Select>
   );
 }
 
-const EFFORTS: Record<string, string> = { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Extra alto', max: 'Máximo' };
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 // Esforço de raciocínio (--effort). Vazio herda o padrão do escritório ou, no próprio escritório, o do Claude Code.
 export function EffortSelect({ value, onChange, allowDefault = true }: { value: string; onChange: (v: string) => void; allowDefault?: boolean }) {
+  const t = useT();
   const fallback = useOffice((s) => s.state.settings.defaultEffort);
   return (
     <Select value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{allowDefault ? `Padrão do escritório (${EFFORTS[fallback] ?? 'Claude Code'})` : 'Padrão do Claude Code'}</option>
-      {Object.entries(EFFORTS).map(([v, label]) => (
+      <option value="">{allowDefault ? t.employee.officeDefault(t.employee.efforts[fallback] ?? 'Claude Code') : t.employee.claudeDefault}</option>
+      {EFFORTS.map((v) => (
         <option key={v} value={v}>
-          {label}
+          {t.employee.efforts[v]}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+// Provedor (nativo ou remoto) — o mesmo seletor no funcionário e no departamento.
+export function ProviderSelect({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const t = useT();
+  const providers = useOffice((s) => s.state.providers);
+  return (
+    <Select value={value ?? ''} onChange={(ev) => onChange(ev.target.value ? Number(ev.target.value) : null)}>
+      <option value="">{t.employee.nativeProvider}</option>
+      {providers.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name} · {p.model}
         </option>
       ))}
     </Select>
@@ -64,6 +86,7 @@ export function EffortSelect({ value, onChange, allowDefault = true }: { value: 
 
 // Versão do CLI e modelos que pedem atualização; botão para testar de novo depois de atualizar.
 export function ModelsStatus() {
+  const t = useT();
   const models = useOffice((s) => s.models);
   const [busy, setBusy] = useState(false);
   const blocked = models?.models?.filter((m) => m.status === 'update') ?? [];
@@ -72,7 +95,7 @@ export function ModelsStatus() {
       <div className="flex items-center gap-2">
         <span>
           Claude Code {models?.cli ?? '…'}
-          {!models?.probedAt && ' · testando modelos…'}
+          {!models?.probedAt && ` · ${t.employee.testing}`}
         </span>
         <button
           className="text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
@@ -83,13 +106,19 @@ export function ModelsStatus() {
             setBusy(false);
           }}
         >
-          {busy ? 'testando…' : 'Atualizar lista'}
+          {busy ? t.employee.testingBtn : t.employee.refreshList}
         </button>
       </div>
       {blocked.length > 0 && (
         <p className="rounded-md bg-amber-50 p-2 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-          {blocked.map((m) => modelName(m.id)).join(', ')} {blocked.length > 1 ? 'exigem' : 'exige'} Claude Code ≥ {blocked.map((m) => m.requires).sort().at(-1)}. Rode{' '}
-          <code>claude update</code> (ou <code>brew upgrade --cask claude-code</code>) e clique em “Atualizar lista”.
+          {t.employee.requires(
+            blocked.map((m) => modelName(m.id)).join(', '),
+            blocked.length > 1,
+            blocked
+              .map((m) => m.requires)
+              .sort()
+              .at(-1) ?? '',
+          )}
         </p>
       )}
     </div>
@@ -107,19 +136,21 @@ const Section = ({ title, children, aside }: { title: string; children: React.Re
 );
 
 export function EmployeeSettings({ e }: { e: Employee }) {
-  const { departments, providers } = useOffice((s) => s.state);
+  const t = useT();
+  const departments = useOffice((s) => s.state.departments);
   const [savedAt, setSavedAt] = useState(0);
+  const intern = e.kind === 'intern';
   const patch = async (body: object) => {
     if ((await act(() => api('PATCH', `/api/employees/${e.id}`, body))) !== undefined) setSavedAt(Date.now());
   };
   return (
     <div className="grid gap-6">
-      <Section title="Identidade" aside={<Saved at={savedAt} />}>
+      <Section title={t.employee.identity} aside={<Saved at={savedAt} />}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Nome" hint="Como os colegas te chamam.">
+          <Field label={t.employee.name} hint={t.employee.nameHint}>
             <Input defaultValue={e.name} key={e.name} onBlur={(ev) => ev.target.value.trim() && ev.target.value !== e.name && patch({ name: ev.target.value })} />
           </Field>
-          <Field label="Departamento">
+          <Field label={t.employee.department}>
             <Select value={e.department_id} onChange={(ev) => patch({ departmentId: Number(ev.target.value) })}>
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -131,63 +162,62 @@ export function EmployeeSettings({ e }: { e: Employee }) {
         </div>
       </Section>
 
-      <Section title="Modelo">
+      <Section title={t.employee.model}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Provedor">
-            <Select value={e.provider_id ?? ''} onChange={(ev) => patch({ providerId: ev.target.value ? Number(ev.target.value) : null })}>
-              <option value="">Nativo (assinatura Claude)</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} · {p.model}
-                </option>
-              ))}
-            </Select>
+          <Field label={t.employee.provider}>
+            <ProviderSelect value={e.provider_id} onChange={(providerId) => patch({ providerId })} />
           </Field>
-          <Field label="Modelo" hint={e.provider_id ? 'Com provedor remoto vale o modelo do provedor.' : undefined}>
+          <Field label={t.employee.model} hint={e.provider_id ? t.employee.modelHint : undefined}>
             <ModelSelect value={e.model ?? ''} onChange={(model) => patch({ model })} />
           </Field>
-          <Field label="Esforço" hint="Mais esforço pensa mais e gasta mais tokens.">
+          <Field label={t.employee.effort} hint={t.employee.effortHint}>
             <EffortSelect value={e.effort ?? ''} onChange={(effort) => patch({ effort })} />
           </Field>
         </div>
-        <SettingRow title="Conectores e MCPs" description="Slack, Drive, Jira… (claude.ai) e MCPs do usuário e do repo, nas tarefas. Somam ~50K tokens a cada chamada; consultas nunca carregam.">
-          <Switch label="Conectores e MCPs" checked={!!e.connectors} onChange={(connectors) => patch({ connectors })} />
+        <SettingRow title={t.employee.connectors} description={t.employee.connectorsHint}>
+          <Switch label={t.employee.connectors} checked={!!e.connectors} onChange={(connectors) => patch({ connectors })} />
         </SettingRow>
       </Section>
 
-      <Section title="Área de trabalho">
-        <div className="grid gap-1.5">
-          <Segmented
-            value={e.isolation}
-            onChange={(isolation) => patch({ isolation })}
-            className="w-full [&>button]:flex-1"
-            size="sm"
-            options={[
-              { value: 'repo', label: 'Cópia principal' },
-              { value: 'worktree', label: 'Worktree isolado' },
-            ]}
-          />
+      <Section title={t.employee.workspace}>
+        {intern ? (
           <p className="text-xs text-zinc-500">
-            {e.isolation === 'worktree' ? 'Cada tarefa num git worktree próprio; sua cópia do repo fica intocada.' : 'Trabalha na sua cópia do repo; tarefas extras em paralelo vão para worktrees.'}
+            {t.employee.internFolder} <code className="break-all">{e.repo_path}</code>
           </p>
-        </div>
-        <SettingRow title="Tarefas em paralelo" description="Acima de 1, as que não cabem na cópia principal vão para worktrees.">
-          <Stepper value={e.max_parallel} min={1} max={5} onChange={(maxParallel) => patch({ maxParallel })} />
-        </SettingRow>
+        ) : (
+          <>
+            <div className="grid gap-1.5">
+              <Segmented
+                value={e.isolation}
+                onChange={(isolation) => patch({ isolation })}
+                className="w-full [&>button]:flex-1"
+                size="sm"
+                options={[
+                  { value: 'repo', label: t.employee.mainCopy },
+                  { value: 'worktree', label: t.employee.worktree },
+                ]}
+              />
+              <p className="text-xs text-zinc-500">{e.isolation === 'worktree' ? t.employee.worktreeOn : t.employee.worktreeOff}</p>
+            </div>
+            <SettingRow title={t.employee.parallel} description={t.employee.parallelHint}>
+              <Stepper value={e.max_parallel} min={1} max={5} onChange={(maxParallel) => patch({ maxParallel })} />
+            </SettingRow>
+          </>
+        )}
       </Section>
 
-      <Section title="Permissões">
-        <SettingRow title="Editar sem pedir" description="Edit/Write dentro da pasta de trabalho não pedem permissão.">
-          <Switch label="Editar sem pedir" checked={!!e.auto_edit} onChange={(autoEdit) => patch({ autoEdit })} />
+      <Section title={t.employee.permissions}>
+        <SettingRow title={t.employee.autoEdit} description={t.employee.autoEditHint}>
+          <Switch label={t.employee.autoEdit} checked={!!e.auto_edit} onChange={(autoEdit) => patch({ autoEdit })} />
         </SettingRow>
         {e.allow_rules.length > 0 && (
           <div className="grid gap-1.5">
-            <span className="text-xs text-zinc-500">Sempre permitido (clique para remover):</span>
+            <span className="text-xs text-zinc-500">{t.employee.alwaysAllowed}</span>
             <div className="flex flex-wrap gap-1.5">
               {e.allow_rules.map((r) => (
                 <button
                   key={r}
-                  title="Remover regra"
+                  title={t.employee.removeRule}
                   onClick={() => patch({ allowRules: e.allow_rules.filter((x) => x !== r) })}
                   className="group inline-flex animate-pop items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 font-mono text-[11px] text-zinc-700 transition hover:bg-red-100 hover:text-red-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-red-950 dark:hover:text-red-300"
                 >
@@ -200,38 +230,40 @@ export function EmployeeSettings({ e }: { e: Employee }) {
         )}
       </Section>
 
-      <Section title="Ficha" aside={<Chip tone={e.profile_source === 'manual' ? 'amber' : 'default'}>{e.profile_source === 'manual' ? 'editada à mão' : 'automática'}</Chip>}>
+      <Section
+        title={intern ? t.employee.role : t.employee.profile}
+        aside={!intern && <Chip tone={e.profile_source === 'manual' ? 'amber' : 'default'}>{e.profile_source === 'manual' ? t.employee.manual : t.employee.auto}</Chip>}
+      >
         <Field
-          label="O que este funcionário sabe"
-          hint={
-            e.profile_source === 'manual'
-              ? 'Editada à mão: não é refeita sozinha. "Refazer ficha" volta ao modo automático.'
-              : 'Os colegas usam a ficha para saber o que perguntar. Refeita sozinha quando o repo anda muitos commits.'
-          }
+          label={intern ? t.employee.roleLabel : t.employee.profileLabel}
+          hint={intern ? t.employee.roleHint : e.profile_source === 'manual' ? t.employee.profileManualHint : t.employee.profileAutoHint}
         >
           <Textarea rows={6} defaultValue={e.profile} key={e.profile} onBlur={(ev) => ev.target.value !== e.profile && patch({ profile: ev.target.value })} />
         </Field>
-        <div>
-          <Button size="sm" icon="refresh" onClick={() => act(() => api('POST', `/api/employees/${e.id}/onboard`))}>
-            Refazer ficha
-          </Button>
-        </div>
+        {!intern && (
+          <div>
+            <Button size="sm" icon="refresh" onClick={() => act(() => api('POST', `/api/employees/${e.id}/onboard`))}>
+              {t.employee.redoProfile}
+            </Button>
+          </div>
+        )}
       </Section>
 
       <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 p-3 dark:border-red-900/50">
         <div>
-          <div className="text-sm font-medium">Demitir {e.name}</div>
-          <p className="text-xs text-zinc-500">Remove o funcionário e o histórico de tarefas dele. O repositório não é tocado.</p>
+          <div className="text-sm font-medium">{t.employee.fire(e.name)}</div>
+          <p className="text-xs text-zinc-500">{intern ? t.employee.fireTextIntern : t.employee.fireText}</p>
         </div>
         <ConfirmButton
           icon="trash"
           size="sm"
-          confirm="Confirmar demissão"
+          confirm={t.employee.fireConfirm}
           onConfirm={async () => {
-            if ((await act(() => api('DELETE', `/api/employees/${e.id}`))) !== undefined) selectEmployee(null);
+            // Fecha o painel dele sem trocar de aba (demitir pela Configuração continua na Configuração).
+            if ((await act(() => api('DELETE', `/api/employees/${e.id}`))) !== undefined) useOffice.setState((s) => (s.selectedEmployeeId === e.id ? { selectedEmployeeId: null } : {}));
           }}
         >
-          Demitir
+          {t.employee.fireBtn}
         </ConfirmButton>
       </div>
     </div>

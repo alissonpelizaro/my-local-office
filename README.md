@@ -1,82 +1,111 @@
 # My Local Office
 
-Escritório virtual local: um agente Claude Code por repositório, agrupados em departamentos. Os agentes se consultam, delegam tasks entre si e pedem permissão ao chefe (você) pela UI. Você assiste tudo num escritório isométrico. Plano completo e fases em [PLAN.md](PLAN.md).
+A local, virtual office for your [Claude Code](https://docs.claude.com/claude-code) agents. Each employee is an agent that owns one of your repositories; employees are grouped in departments, consult each other, delegate work and ask you before anything risky. You watch it all happen in an isometric office and approve, answer or redirect from the UI.
 
-## Rodando
+![The office: employees at their desks, a permission request waiting on the boss's desk](docs/screenshots/office.png)
 
-Pré-requisitos: Node 22.18+ (`.tool-versions`), pnpm, Claude Code logado (`claude auth status`).
+| Conversation with an employee | Tasks |
+|---|---|
+| ![Chat with the plan, the tools used and a permission request](docs/screenshots/conversation.png) | ![Active, planned and finished tasks](docs/screenshots/tasks.png) |
+
+| First access | Team settings |
+|---|---|
+| ![Setup assistant](docs/screenshots/setup.png) | ![Departments and employees](docs/screenshots/settings.png) |
+
+Everything runs on your machine: a small Node server, a SQLite file and one `claude -p` process per task, using your Claude subscription (or any provider you configure).
+
+## Install
+
+macOS and Linux, Intel and ARM. You only need [Claude Code](https://docs.claude.com/claude-code) installed and logged in (`claude auth status`); Node comes bundled.
+
+```bash
+curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/install.sh | bash
+```
+
+Then open **http://127.0.0.1:4410**. A setup assistant walks you through the language, your departments and your first hires.
+
+The installer puts the app in `~/.my-local-office/app`, your data in `~/.my-local-office/data` and registers a background service (a LaunchAgent on macOS, a `systemd --user` unit on Linux) that starts on login and restarts if it crashes. Logs: `~/.my-local-office/data/office.log`.
+
+| Option | |
+|---|---|
+| `--version v1.2.0` | Install a specific release |
+| `--file my-local-office-<os>-<arch>.tar.gz` | Install a package you already downloaded |
+| `--no-service` | Skip the service; start it yourself with `~/.my-local-office/app/scripts/start.sh` |
+
+On Linux, run `loginctl enable-linger $USER` if the office should keep running without an open session.
+
+### Updates
+
+The office checks GitHub for a new release every few hours. When there is one, a badge shows up in the header and **Settings → About → Update now** downloads it, swaps the app folder (your data stays) and restarts the service. Running tasks are interrupted.
+
+You can also update from the terminal by running the install command again. If macOS blocks the downloaded files (quarantine), the same script clears it:
+
+```bash
+curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/install.sh | bash
+```
+
+### Uninstall
+
+```bash
+~/.my-local-office/app/scripts/uninstall.sh          # keeps ~/.my-local-office/data
+~/.my-local-office/app/scripts/uninstall.sh --purge  # removes everything
+```
+
+### Configuration
+
+Set these before running the installer (they are written into the service):
+
+| Variable | Default | |
+|---|---|---|
+| `OFFICE_PORT` | `4410` | |
+| `OFFICE_HOST` | `127.0.0.1` | `0.0.0.0` opens it to your network and requires `OFFICE_TOKEN` |
+| `OFFICE_TOKEN` | | 16+ characters. On another device, open `http://<ip>:4410/?token=<token>` once (it becomes a cookie). Localhost never asks |
+| `MLO_HOME` | `~/.my-local-office` | Install folder |
+| `OFFICE_CLAUDE_BIN` | `claude` | |
+
+Network access example: `OFFICE_HOST=0.0.0.0 OFFICE_TOKEN=$(openssl rand -hex 16) bash install.sh`. Whoever has the token runs agents on your machine: trusted networks only.
+
+## How it works
+
+- **Departments** group employees by project, product or area. Each one is a room in the office.
+- **Employees** own a git repository. Each task is a `claude -p` process (stream-json) running in the repo, so it inherits your `~/.claude/CLAUDE.md`, the repo's `CLAUDE.md`, skills and allowlists. On hire, a quick read-only onboarding writes the employee's profile, which colleagues use to know whom to ask.
+- **Interns** are not tied to a repository. They work in their own folder (`data/workspaces/`) on research, writing, analysis and errands, and ask the owners when code is involved.
+- **The `office` MCP** connects them:
+  - `directory`: who takes care of what
+  - `ask_colleague`: a read-only consultation in the colleague's repository
+  - `delegate_task`: a task for another employee (needs your approval by default)
+  - `ask_boss`: a question for you
+  - `approve`: the permission prompt
+- **Permissions**: whatever your settings do not already allow becomes a request in the UI (and a "!" over the employee). External actions (`git push`, opening/merging PRs, publish, docker, sending messages…) always ask. Read-only shell commands can run without asking.
+- **Providers**: each employee (or a whole department, in one click) uses the Claude subscription or a remote provider. Anthropic-compatible providers are called directly; OpenAI-compatible ones go through a built-in bridge. A local Ollama works too (set its context to ~64K).
+- **Conversations**: click an employee to chat. Each message continues the same Claude session; while a turn is running, your message goes in right away. Sessions you opened outside the office (terminal, IDE) can be continued as a copy.
+- **Tasks** run now, at a set time or on repeat (e.g. every 15 min). A repeating task can have a pre-check command: no output means nothing to do and no tokens spent.
+- **Worktrees**: per employee, tasks run in the main copy or always in an isolated `git worktree`; parallel tasks use worktrees automatically.
+- **Costs** per day, department and employee (on a subscription it is the API-price equivalent, useful to compare usage).
+- **Languages**: English, Portuguese and Spanish, chosen in Settings. Agents reply in the same language.
+- **Shortcuts**: `N` new task, `⌘K` search employees, tasks and actions, `Esc` closes the panel.
+
+## Development
+
+Requires Node 22.18+ (see `.tool-versions`) and pnpm.
 
 ```bash
 pnpm install
-pnpm build        # gera apps/web/dist
-pnpm start        # http://127.0.0.1:4410 (server + UI)
-```
-
-Sempre ligado (sobe no login, reinicia se cair): `pnpm install-service`. Para remover: `pnpm uninstall-service`. Os logs ficam em `data/office.log`.
-
-Desenvolvimento: `pnpm dev` sobe o server com `--watch` e o Vite em http://127.0.0.1:5173 (com proxy para `/api`). Cada restart do server pelo watch derruba as execuções em andamento.
-
-Primeiro uso: **Configuração → Importar repositórios** aponta para `~/webprojects`, sugere o departamento de cada repo e contrata os escolhidos. Cada contratado faz um onboarding rápido que escreve a própria ficha.
-
-O console antigo (F0) continua em `/console`.
-
-| Variável | Padrão | |
-|---|---|---|
-| `OFFICE_PORT` | `4410` | |
-| `OFFICE_DATA` | `./data` | SQLite e chaves, pasta `0700`, fora do git |
-| `OFFICE_MAX_CONCURRENT` | `3` | valor inicial; depois é editável na UI |
-| `OFFICE_DELEGATION_APPROVAL` | `1` | valor inicial; depois é editável na UI |
-| `OFFICE_CLAUDE_BIN` | `claude` | |
-| `OFFICE_HOST` | `127.0.0.1` | `0.0.0.0` abre para a rede local; exige `OFFICE_TOKEN` |
-| `OFFICE_TOKEN` | | 16+ caracteres. Em outro dispositivo, abra `http://<ip>:4410/?token=<token>` uma vez (vira cookie). Localhost não pede token |
-
-Acesso pela rede: `OFFICE_HOST=0.0.0.0 OFFICE_TOKEN=$(openssl rand -hex 16) pnpm install-service`. Quem tem o token roda agentes na sua máquina: só em rede confiável.
-
-```bash
-pnpm test         # política de permissões e ponte OpenAI
+pnpm dev          # server with --watch + Vite on http://127.0.0.1:5173
+pnpm build        # builds apps/web/dist
+pnpm start        # server + UI on http://127.0.0.1:4410 (data in ./data)
+pnpm test
 pnpm typecheck
 ```
 
-## Como funciona
+`pnpm install-service` registers a LaunchAgent that runs the source checkout (macOS); `pnpm uninstall-service` removes it.
 
-- **Funcionário**: um repo git. Cada task é um processo `claude -p` (stream-json) com `cwd` no repo. Herda `~/.claude/CLAUDE.md`, o `CLAUDE.md` do repo, as skills e as allowlists do settings.
-- **MCP `office`** (`/mcp`, autenticado por token de execução):
-  - `directory`
-  - `ask_colleague`: consulta read-only no repo do colega
-  - `delegate_task`: precisa de aprovação
-  - `ask_boss`
-  - `approve`: permission prompt tool
-- **Permissões**: o que o settings não libera vira um "!" sobre o funcionário e um pedido na UI. Ações externas (`git push`, `gh pr review/merge`, docker…) sempre perguntam.
-- **Provedores**: cada funcionário usa a assinatura nativa ou um provedor remoto.
-  - Anthropic-compatível: direto. Prefira este formato quando o provedor oferecer (LiteLLM, Ollama), porque a ponte OpenAI perde o prompt caching.
-  - OpenAI-compatível: via ponte em `/bridge/:id`.
-  - Ollama local: botão **Ollama local** em Provedores. O Claude Code precisa de uns 64K de contexto, então suba o Ollama com `OLLAMA_CONTEXT_LENGTH=65536` e use o mesmo valor em "Janela de contexto". Execuções locais custam $0 na aba Custos.
-  - O cadastro sugere os modelos que o provedor anuncia em `/models`.
-- **Consumo de tokens**:
-  - Conversas são compactadas pelo Claude Code ao passar de **Compactar conversa acima de** (200K por padrão, via `CLAUDE_CODE_AUTO_COMPACT_WINDOW`). Com provedor, vale a menor entre essa e a janela do provedor. A compactação aparece no chat.
-  - Consultas entre colegas usam o **Modelo das consultas** (sonnet), não o do colega, com esforço `low`.
-  - **Conectores e MCPs** (por funcionário, desligado por padrão): os conectores do claude.ai (Slack, Drive, Jira…) e os MCPs do usuário e do repo somam ~50K tokens de tools a cada chamada. Desligado, o processo sobe com `--strict-mcp-config` e só enxerga o MCP `office`. Consultas e onboarding nunca carregam.
-  - **Esforço** (`--effort` low…max): padrão do escritório e por funcionário. Vazio deixa o Claude Code decidir. Onboarding não usa.
-- **Conversas**: clicar num funcionário abre um chat.
-  - Cada mensagem é um turno que retoma a mesma sessão do Claude (`--resume`), na mesma pasta onde a conversa começou. Se o worktree tiver sido descartado, é recriado no mesmo caminho.
-  - Durante um turno, a mensagem entra na hora (stdin).
-  - A aba Sessões lista as conversas do escritório e as sessões do Claude Code abertas fora dele (terminal, VS Code) no repo. Essas são retomadas com `--fork-session`, então a original não muda.
-- **Tarefas agendadas e recorrentes**: em **Nova tarefa** (botão no topo ou tecla `N`), escolha Agora, Agendar ou Repetir (ex.: a cada 15 min, a partir de agora).
-  - Cada execução da série, ao entrar na fila, já deixa a próxima agendada no mesmo ritmo. Por isso a série sobrevive a um restart; horários perdidos são pulados, não acumulados.
-  - Se a execução anterior ainda estiver na fila, o horário é pulado.
-  - A série inteira fica numa conversa só, com sessão nova a cada execução. Para encerrar, cancele a agendada ("Encerrar série").
-  - Só notifica no macOS quando uma execução falha.
-  - **Pré-checagem** (opcional): comando de shell que roda no repo antes de cada execução. Sem saída, a execução termina como "nada a fazer" sem chamar o agente; com saída, ela é anexada ao prompt. Saída com código ≠ 0 conta como falha. Bom para polling (PRs, filas, alertas): só gasta tokens quando há o que fazer.
-- **Atalhos**: `N` nova tarefa (para o funcionário aberto, se houver), `⌘K` busca funcionários, tarefas e ações, `Esc` fecha o painel.
-- **Instruções**: o Claude Code carrega o `~/.claude/CLAUDE.md` e o `CLAUDE.md` do repo sozinho. O `AGENTS.md` da raiz do repo vai no system prompt (tasks e consultas), a menos que o `CLAUDE.md` já importe com `@AGENTS.md`.
-- **Modelos**: a lista mostra os aliases (opus/sonnet/haiku, que acompanham a versão mais nova) com a versão real de hoje e as versões fixas. A versão vem do `init` do CLI, com o processo encerrado antes da chamada à API.
-- **Worktrees**: por funcionário, as tasks rodam na cópia principal ou sempre num worktree isolado (`data/worktrees/`). Com `max_parallel` > 1, as extras rodam em worktrees. Worktree sem mudanças é descartado sozinho; com trabalho, aparece na task para você revisar e remover.
-- **Custos**: cada execução (task, consulta, onboarding) é gravada em `usage`. A aba Custos mostra por dia, departamento e funcionário. Na assinatura é o equivalente em preço de API.
-- **Notificações**: pedidos de permissão/pergunta/delegação e fim de task viram notificação do macOS (configurável).
-- **Fichas**: refeitas sozinhas (haiku) quando o repo anda N commits desde o onboarding. Fichas editadas à mão não são tocadas.
-- **Eventos**: tudo vai para a tabela `events` e é transmitido por SSE (`/api/events`). O escritório anima ao vivo e o replay de qualquer task reusa a mesma timeline.
-
-| Pasta | |
+| Folder | |
 |---|---|
-| `apps/server/src` | `runner.ts` (CLI), `mcp.ts`, `office.ts` (tasks, aprovações, consultas), `policy.ts`, `importer.ts`, `bridge.js` |
-| `apps/web/src` | `store.ts` (estado + SSE + replay), `components/` (painéis), `office/` (planta isométrica e cena Phaser) |
+| `apps/server/src` | `runner.ts` (Claude Code CLI), `mcp.ts`, `office.ts` (tasks, approvals, consultations), `policy.ts`, `update.ts`, `bridge.js` |
+| `apps/web/src` | `store.ts` (state, SSE, replay), `components/`, `office/` (isometric floor plan and Phaser scene), `i18n/` |
+| `scripts` | `install.sh`, `uninstall.sh`, `start.sh`, `build-release.sh` |
+
+### Releases
+
+PR titles follow [Conventional Commits](https://www.conventionalcommits.org). Release Drafter labels each PR and keeps a draft of the next version (`feat` → minor, `fix`/`chore`/`docs` → patch, `!` → major). Publishing the draft triggers the release workflow, which builds one package per platform with Node bundled, attaches them and `install.sh` to the release and checks that the package installs and starts on macOS and Linux.

@@ -2,6 +2,7 @@
 // Faixas de salas acima e abaixo de corredores horizontais. Com mais de um corredor, uma espinha à direita
 // liga todos e a planta cresce nas duas direções em vez de virar uma linha. As salas esticam para cada faixa
 // ficar retangular, sem vãos entre elas. A área externa (Jardim) fica fora do prédio, no fim da espinha.
+import type { IconName } from '../components/icons';
 import type { Department, Employee } from '../types';
 import type { Wall } from './draw';
 import { type Blueprint, type Floor, LEISURE } from './rooms';
@@ -37,7 +38,7 @@ export type Room = Rect & {
   segs: Seg[];
 };
 export type Seat = { roomId: string; desk: Pt; seat: Pt; visitor: Pt };
-export type LeisureSpot = Pt & { id: string; roomId: string; icon: string; pair?: string; face: 'front' | 'back' };
+export type LeisureSpot = Pt & { id: string; roomId: string; icon: IconName; pair?: string; face: 'front' | 'back' };
 export type Floorplan = {
   rooms: Room[];
   seats: Map<number, Seat>;

@@ -5,11 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { eventsOfThread } from './bus.ts';
 import { all, type Employee, get, type Task } from './db.ts';
+import { msg } from './i18n.ts';
 import { createTask, HttpError, isRunning, messageTask } from './office.ts';
 
 function titleOf(text: string) {
   const line = String(text ?? '').trim().split('\n')[0];
-  if (!line) throw new HttpError(400, 'mensagem vazia');
+  if (!line) throw new HttpError(400, msg().emptyMessage);
   return line.length > 80 ? `${line.slice(0, 79)}…` : line;
 }
 
@@ -42,7 +43,7 @@ const SHOWN_TURNS = 30;
 
 export function thread(id: number) {
   const tasks = all<Task>('SELECT * FROM tasks WHERE thread_id = ? ORDER BY id', id);
-  if (!tasks.length) throw new HttpError(404, 'conversa não encontrada');
+  if (!tasks.length) throw new HttpError(404, msg().threadNotFound);
   return { id, employeeId: tasks[0].employee_id, title: tasks[0].title, tasks, events: eventsOfThread(id, SHOWN_TURNS), hiddenTurns: Math.max(0, tasks.length - SHOWN_TURNS) };
 }
 
@@ -54,13 +55,13 @@ export function startThread(employeeId: number, text: string, resumeSessionId?: 
 export function sendToThread(id: number, text: string) {
   const title = titleOf(text);
   const tasks = all<Task>('SELECT * FROM tasks WHERE thread_id = ? ORDER BY id', id);
-  if (!tasks.length) throw new HttpError(404, 'conversa não encontrada');
+  if (!tasks.length) throw new HttpError(404, msg().threadNotFound);
   const running = tasks.find((t) => isRunning(t.id));
   if (running) {
     messageTask(running.id, text);
     return running;
   }
-  if (tasks.some((t) => t.status === 'queued' || t.status === 'pending_approval')) throw new HttpError(409, 'a conversa já tem um turno na fila');
+  if (tasks.some((t) => t.status === 'queued' || t.status === 'pending_approval')) throw new HttpError(409, msg().threadQueued);
   const base = tasks.findLast((t) => t.session_id) ?? tasks.at(-1)!;
   return createTask({ employeeId: base.employee_id, title, body: text, parentTaskId: base.id });
 }
@@ -70,7 +71,7 @@ export function sendToThread(id: number, text: string) {
 const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 // Mesma regra do Claude Code: a pasta do projeto vira um nome com tudo que não é letra/número trocado por "-".
 const projectDir = (cwd: string) => path.join(PROJECTS, cwd.replace(/[^a-zA-Z0-9]/g, '-'));
-const OFFICE_PROMPT = /^(Task #\d+|Pergunta de |Leia o README|ok$)/;
+const OFFICE_PROMPT = /^(Task #\d+|Pergunta de |Question from |Leia o README|Read this repository|ok$)/;
 
 function describeSession(file: string) {
   const fd = fs.openSync(file, 'r');
@@ -100,7 +101,7 @@ function describeSession(file: string) {
 
 export function nativeSessions(employeeId: number) {
   const e = get<Employee>('SELECT * FROM employees WHERE id = ?', employeeId);
-  if (!e) throw new HttpError(404, 'funcionário não encontrado');
+  if (!e) throw new HttpError(404, msg().employeeNotFound);
   const dir = projectDir(e.repo_path);
   if (!fs.existsSync(dir)) return [];
   // Sessões criadas pelo próprio escritório (tasks, consultas, onboarding) não entram.

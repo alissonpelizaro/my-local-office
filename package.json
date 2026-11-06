@@ -1,7 +1,14 @@
 {
   "name": "my-local-office",
+  "version": "1.0.0",
   "private": true,
+  "description": "A local virtual office where Claude Code agents, one per repository, work together while you watch.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alissonpelizaro/my-local-office.git"
+  },
   "type": "module",
+  "packageManager": "pnpm@11.24.0",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "start": "pnpm --filter server start",

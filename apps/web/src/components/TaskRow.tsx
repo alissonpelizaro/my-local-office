@@ -1,11 +1,12 @@
 import { ago, everyLabel, money, names, until, when } from '../format';
-import { openTask, useOffice } from '../store';
+import { openTask, tr, useOffice, useT } from '../store';
 import type { Task } from '../types';
 import { Avatar, Chip, cx, StatusIcon, useNow } from './ui';
 import { Icon } from './icons';
 
 // Linha de tarefa reutilizada em todas as listas. Mostra quem, situação e a dica certa (agendada → quando).
 export function TaskRow({ task: t, selected, onClick }: { task: Task; selected?: boolean; onClick?: () => void }) {
+  const tt = useT();
   const state = useOffice((s) => s.state);
   const name = names(state);
   useNow(30_000); // mantém "em 3 min" fresco
@@ -29,10 +30,10 @@ export function TaskRow({ task: t, selected, onClick }: { task: Task; selected?:
         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-500">
           {employee && <Avatar name={employee.name} color={color} size="xs" />}
           <span className="truncate">{name(t.employee_id)}</span>
-          {t.origin === 'agent' && <span className="truncate">· de {name(t.from_employee_id)}</span>}
+          {t.origin === 'agent' && <span className="truncate">· {tt.tasks.from(name(t.from_employee_id))}</span>}
           <span className="text-zinc-300 dark:text-zinc-700">·</span>
           <span className="whitespace-nowrap">
-            {t.status === 'scheduled' && t.run_at ? until(t.run_at) : t.status === 'running' ? 'rodando' : t.finished_at ? ago(t.finished_at) : ago(t.created_at)}
+            {t.status === 'scheduled' && t.run_at ? until(t.run_at) : t.status === 'running' ? tt.tasks.runningNow : t.finished_at ? ago(t.finished_at) : ago(t.created_at)}
           </span>
         </div>
       </div>
@@ -44,5 +45,5 @@ export function TaskRow({ task: t, selected, onClick }: { task: Task; selected?:
 
 export function nextScheduleHint(t: Task) {
   if (t.status !== 'scheduled' || !t.run_at) return null;
-  return t.repeat_every ? `${everyLabel(t.repeat_every)} · próxima ${when(t.run_at)}` : `agendada ${when(t.run_at)}`;
+  return t.repeat_every ? `${everyLabel(t.repeat_every)} · ${tr().tasks.next(when(t.run_at))}` : tr().tasks.scheduled(when(t.run_at));
 }

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ACTIVITY, clock, everyLabel, money, names, STATUS, time, when } from '../format';
-import { act, api, openChat, startReplay, toast, useOffice } from '../store';
+import type { Dict } from '../i18n';
+import { ACTIVITY_ICON, clock, everyLabel, money, names, statusLabel, STATUS_TONE, time, when } from '../format';
+import { act, api, openChat, startReplay, toast, tr, useOffice, useT } from '../store';
 import type { Approval, Employee, OfficeEvent, Task, Thread, ThreadDetail } from '../types';
 import { ApprovalCard, QuestionCard } from './ApprovalCard';
-import { Icon } from './icons';
+import { Icon, type IconName } from './icons';
 import { Markdown } from './Markdown';
 import { PauseButton } from './TasksTab';
-import { Button, Chip, cx, Skeleton, Spinner } from './ui';
+import { Button, Chip, cx, Rich, Skeleton, Spinner } from './ui';
 
 type Todo = { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string };
 type Row =
@@ -14,22 +15,22 @@ type Row =
   | { kind: 'agent'; key: string; text: string }
   | { kind: 'tools'; key: string; items: OfficeEvent[] }
   | { kind: 'todos'; key: string; todos: Todo[] }
-  | { kind: 'note'; key: string; icon: string; text: string; detail?: string; tone?: 'warn' }
+  | { kind: 'note'; key: string; icon: IconName; text: string; detail?: string; tone?: 'warn' }
   | { kind: 'question'; key: string; approvalId: number; text: string }
   | { kind: 'approval'; key: string; approvalId: number }
   | { kind: 'end'; key: string; status: string; cost: number; error?: string }
   | { kind: 'run'; key: string; ts: string };
 
 // O que o agente fez entre uma fala e outra, em linguagem natural.
-const ACTIONS: [RegExp, string, string, string][] = [
-  [/^Read$/, '📖', '1 leitura', '# leituras'],
-  [/^(Grep|Glob)$/, '🔍', '1 busca', '# buscas'],
-  [/^Bash$/, '⚙️', '1 comando', '# comandos'],
-  [/^(Edit|MultiEdit|Write|NotebookEdit)$/, '✏️', '1 edição', '# edições'],
-  [/^(WebFetch|WebSearch)$/, '🌐', '1 consulta na web', '# consultas na web'],
-  [/^(Task|Agent)$/, '🤖', '1 subagente', '# subagentes'],
-  [/^mcp__office__/, '🤝', '1 ação no escritório', '# ações no escritório'],
-  [/.*/, '🔧', '1 ferramenta', '# ferramentas'],
+const ACTIONS: [RegExp, IconName, keyof Dict['chat']['actions']][] = [
+  [/^Read$/, 'book', 'read'],
+  [/^(Grep|Glob)$/, 'search', 'search'],
+  [/^Bash$/, 'terminal', 'command'],
+  [/^(Edit|MultiEdit|Write|NotebookEdit)$/, 'pencil', 'edit'],
+  [/^(WebFetch|WebSearch)$/, 'globe', 'web'],
+  [/^(Task|Agent)$/, 'bot', 'subagent'],
+  [/^mcp__office__/, 'handshake', 'office'],
+  [/.*/, 'wrench', 'tool'],
 ];
 const actionOf = (name: string) => ACTIONS.find(([re]) => re.test(name))!;
 const HIDDEN_TOOLS = new Set(['AskUserQuestion', 'TodoWrite', 'mcp__office__ask_boss']);
@@ -40,11 +41,12 @@ function summarizeTools(items: OfficeEvent[]) {
     const a = actionOf(i.data.name);
     counts.set(a, (counts.get(a) ?? 0) + 1);
   }
-  return [...counts].map(([[, icon, one, many], n]) => `${icon} ${n === 1 ? one : many.replace('#', String(n))}`).join(' · ');
+  return [...counts].map(([[, icon, key], n]) => ({ icon, text: tr().chat.actions[key](n) }));
 }
 
 // Linha do tempo da conversa: o que você disse, o que o agente respondeu e o que ele fez no caminho.
 function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number | null) => string): Row[] {
+  const t = tr().chat;
   const rows: Row[] = [];
   let tools: OfficeEvent[] = [];
   let todosAt = -1; // um checklist por turno, sempre o mais recente
@@ -73,8 +75,8 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
           key: `u${e.id}`,
           text: d.body || d.title,
           ts: e.ts,
-          who: d.origin === 'agent' ? `${name(d.from_employee_id)} (colega)` : d.origin === 'comms' ? 'Comunicação' : 'Você',
-          note: d.repeat_every ? `🔁 ${everyLabel(d.repeat_every)}` : undefined,
+          who: d.origin === 'agent' ? t.colleague(name(d.from_employee_id)) : d.origin === 'comms' ? t.comms : tr().common.you,
+          note: d.repeat_every ? everyLabel(d.repeat_every) : undefined,
         });
         break;
       case 'task.status':
@@ -85,11 +87,11 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
         break;
       case 'task.updated':
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: '✏️', text: 'Você editou o pedido', detail: d.body || d.title });
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: 'pencil', text: t.editedRequest, detail: d.body || d.title });
         break;
       case 'boss.message':
         flush();
-        rows.push({ kind: 'user', key: `u${e.id}`, text: d.text, ts: e.ts, who: 'Você', note: 'durante o trabalho' });
+        rows.push({ kind: 'user', key: `u${e.id}`, text: d.text, ts: e.ts, who: tr().common.you, note: t.duringWork });
         break;
       case 'agent.text':
         if (!mine || d.kind !== 'task') break;
@@ -110,19 +112,19 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
       case 'agent.compact':
         if (!mine || d.kind !== 'task') break;
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: '🗜️', text: `Conversa compactada${d.preTokens ? ` (tinha ${Math.round(d.preTokens / 1000)}K tokens)` : ''}` });
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: 'shrink', text: t.compacted(d.preTokens ? Math.round(d.preTokens / 1000) : 0) });
         break;
       case 'colleague.ask':
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: '🤝', text: `Perguntou a ${d.to}`, detail: d.question });
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: 'handshake', text: t.askedColleague(d.to), detail: d.question });
         break;
       case 'colleague.answer':
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: '💬', text: `${d.from} respondeu`, detail: d.answer });
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: 'message', text: t.colleagueAnswered(d.from), detail: d.answer });
         break;
       case 'task.delegated':
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: '📄', text: `Delegou a ${d.to}: ${d.title}` });
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: 'file', text: t.delegatedTo(d.to, d.title) });
         break;
       case 'approval.requested':
         flush();
@@ -131,14 +133,14 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
         break;
       case 'approval.resolved':
         flush();
-        if (d.kind === 'question' && d.status === 'answered') rows.push({ kind: 'user', key: `u${e.id}`, text: d.answer, ts: e.ts, who: 'Você' });
-        else if (d.kind === 'question') rows.push({ kind: 'note', key: `n${e.id}`, icon: '💬', text: d.status === 'expired' ? 'A pergunta expirou' : 'Você preferiu responder pela conversa' });
-        else if (d.status === 'denied') rows.push({ kind: 'note', key: `n${e.id}`, icon: '🚫', text: d.answer ? `Você negou: ${d.answer}` : 'Você negou', tone: 'warn' });
-        else if (d.status === 'expired') rows.push({ kind: 'note', key: `n${e.id}`, icon: '⌛', text: 'Pedido expirou' });
+        if (d.kind === 'question' && d.status === 'answered') rows.push({ kind: 'user', key: `u${e.id}`, text: d.answer, ts: e.ts, who: tr().common.you });
+        else if (d.kind === 'question') rows.push({ kind: 'note', key: `n${e.id}`, icon: 'message', text: d.status === 'expired' ? t.questionExpired : t.answerInChat });
+        else if (d.status === 'denied') rows.push({ kind: 'note', key: `n${e.id}`, icon: 'ban', text: t.denied(d.answer), tone: 'warn' });
+        else if (d.status === 'expired') rows.push({ kind: 'note', key: `n${e.id}`, icon: 'hourglass', text: t.requestExpired });
         break;
       case 'task.worktree':
         flush();
-        rows.push({ kind: 'note', key: `n${e.id}`, icon: '🌿', text: 'Trabalho mantido num worktree isolado', detail: d.dir });
+        rows.push({ kind: 'note', key: `n${e.id}`, icon: 'branch', text: t.worktreeKept, detail: d.dir });
         break;
       case 'task.finished':
         flush();
@@ -151,6 +153,7 @@ function buildRows(events: OfficeEvent[], employeeId: number, name: (id: number 
 }
 
 export function ChatView({ employee }: { employee: Employee }) {
+  const t = useT();
   const target = useOffice((s) => s.chat[employee.id]);
   const state = useOffice((s) => s.state);
   const live = useOffice((s) => s.events);
@@ -190,12 +193,12 @@ export function ChatView({ employee }: { employee: Employee }) {
     };
   }, [detail, live, state.tasks]);
 
-  const rows = useMemo(() => buildRows(events, employee.id, name), [events, employee.id, name]);
-  const series = current.find((t) => (t.status === 'scheduled' || t.status === 'paused') && t.repeat_every);
-  const running = current.find((t) => t.status === 'running');
-  const queued = current.find((t) => t.status === 'scheduled' || t.status === 'queued' || t.status === 'pending_approval');
-  const cost = tasks.reduce((s, t) => s + t.cost_usd, 0);
-  const taskIds = new Set(tasks.map((t) => t.id));
+  const rows = useMemo(() => buildRows(events, employee.id, name), [events, employee.id, name, t]);
+  const series = current.find((x) => (x.status === 'scheduled' || x.status === 'paused') && x.repeat_every);
+  const running = current.find((x) => x.status === 'running');
+  const queued = current.find((x) => x.status === 'scheduled' || x.status === 'queued' || x.status === 'pending_approval');
+  const cost = tasks.reduce((s, x) => s + x.cost_usd, 0);
+  const taskIds = new Set(tasks.map((x) => x.id));
   const waiting = state.approvals.filter((a) => a.task_id != null && taskIds.has(a.task_id));
   const question = waiting.find((a): a is Extract<Approval, { kind: 'question' }> => a.kind === 'question');
 
@@ -210,7 +213,7 @@ export function ChatView({ employee }: { employee: Employee }) {
   // Linhas que já existiam ao abrir a conversa entram sem animação; só as novas deslizam.
   const seen = useRef<{ thread: number; keys: Set<string> } | null>(null);
   if (detail && seen.current?.thread !== detail.id) seen.current = { thread: detail.id, keys: new Set(rows.map((r) => r.key)) };
-  const lastRun = tasks.findLast((t) => t.status !== 'scheduled' && t.status !== 'paused' && t.status !== 'queued');
+  const lastRun = tasks.findLast((x) => x.status !== 'scheduled' && x.status !== 'paused' && x.status !== 'queued');
 
   const send = async (text: string) => {
     stick.current = true;
@@ -234,26 +237,26 @@ export function ChatView({ employee }: { employee: Employee }) {
     return !!task;
   };
 
-  const status = question
-    ? '❓ esperando sua resposta'
+  const status: { icon?: IconName; text: string } | null = question
+    ? { icon: 'question', text: t.chat.waitingAnswer }
     : waiting.length
-      ? '🔐 esperando sua permissão'
+      ? { icon: 'lock', text: t.chat.waitingPermission }
       : running
-        ? `${ACTIVITY[employee.activity].icon} ${ACTIVITY[employee.activity].label}…`
+        ? { icon: ACTIVITY_ICON[employee.activity], text: `${t.activity[employee.activity]}…` }
         : queued?.status === 'scheduled'
-          ? `${queued.repeat_every ? `série ${everyLabel(queued.repeat_every)} · próxima` : 'agendada'} ${when(queued.run_at!)}`
+          ? { icon: queued.repeat_every ? 'repeat' : 'calendar', text: queued.repeat_every ? t.chat.seriesNext(everyLabel(queued.repeat_every), when(queued.run_at!)) : t.chat.scheduled(when(queued.run_at!)) }
           : queued?.status === 'pending_approval'
-          ? 'aguardando aprovação da delegação…'
-          : queued
-            ? 'na fila…'
-            : null;
+            ? { text: t.chat.awaitingDelegation }
+            : queued
+              ? { text: t.chat.queued }
+              : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-zinc-200 pb-2 dark:border-zinc-800">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{target?.kind === 'thread' ? (detail?.title ?? '…') : target?.kind === 'native' ? `↪ ${target.title}` : 'Nova conversa'}</span>
+            <span className="truncate text-sm font-medium">{target?.kind === 'thread' ? (detail?.title ?? '…') : target?.kind === 'native' ? `↪ ${target.title}` : t.chat.newChat}</span>
             {series && (
               <Chip tone={series.status === 'paused' ? 'amber' : 'violet'} icon={series.status === 'paused' ? 'pause' : 'repeat'}>
                 {everyLabel(series.repeat_every!)}
@@ -262,18 +265,20 @@ export function ChatView({ employee }: { employee: Employee }) {
           </div>
           {target?.kind === 'thread' && (
             <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-              <span>{tasks.length} turno(s) · {money(cost)}</span>
+              <span>
+                {t.chat.turns(tasks.length)} · {money(cost)}
+              </span>
               {tasks.at(-1)?.worktree && <Icon name="branch" className="h-3 w-3" />}
             </div>
           )}
         </div>
         {series && <PauseButton task={series} compact />}
         {target?.kind === 'thread' && lastRun && (
-          <Button variant="ghost" size="icon" icon="play" title="Assistir o último turno no escritório" onClick={() => startReplay(lastRun.id)} />
+          <Button variant="ghost" size="icon" icon="play" title={t.chat.watchLast} onClick={() => startReplay(lastRun.id)} />
         )}
         {target?.kind !== 'new' && (
           <Button variant="ghost" size="sm" icon="plus" onClick={() => openChat(employee.id, { kind: 'new' })}>
-            Nova
+            {t.chat.new}
           </Button>
         )}
       </div>
@@ -288,7 +293,7 @@ export function ChatView({ employee }: { employee: Employee }) {
       >
         {target?.kind === 'native' && (
           <p className="mb-3 rounded-lg bg-blue-50 p-2 text-xs text-blue-800 dark:bg-blue-950/50 dark:text-blue-200">
-            Continuando uma sessão do Claude Code aberta fora do escritório. {employee.name} trabalha numa cópia dela: a sessão original não é alterada.
+            {t.chat.nativeNote(employee.name)}
           </p>
         )}
         {target?.kind === 'new' && !optimistic && (
@@ -297,7 +302,7 @@ export function ChatView({ employee }: { employee: Employee }) {
               <Icon name="message" className="h-6 w-6" />
             </div>
             <p className="max-w-xs text-sm text-zinc-500">
-              Converse com <b className="text-zinc-800 dark:text-zinc-200">{employee.name}</b>. Cada mensagem continua a mesma sessão, com todo o contexto anterior.
+              <Rich text={t.chat.empty(employee.name)} />
             </p>
           </div>
         )}
@@ -310,12 +315,11 @@ export function ChatView({ employee }: { employee: Employee }) {
         )}
         {series && (
           <p className="mb-3 flex items-center gap-2 rounded-lg bg-violet-50 p-2 text-xs text-violet-800 dark:bg-violet-950/40 dark:text-violet-200">
-            <Icon name="repeat" className="h-3.5 w-3.5" /> Série {everyLabel(series.repeat_every!)} ·{' '}
-            {series.status === 'paused' ? 'pausada' : `próxima ${when(series.run_at!)}`}. Cada execução aparece como um turno abaixo.
+            <Icon name="repeat" className="h-3.5 w-3.5" /> {t.chat.seriesBanner(everyLabel(series.repeat_every!), series.status === 'paused' ? null : when(series.run_at!))}
           </p>
         )}
         {detail && detail.hiddenTurns > 0 && (
-          <p className="mb-3 text-center text-xs text-zinc-400">+{detail.hiddenTurns} turno(s) anteriores ocultos</p>
+          <p className="mb-3 text-center text-xs text-zinc-400">{t.chat.hiddenTurns(detail.hiddenTurns)}</p>
         )}
         <div className="grid gap-3">
           {rows.map((r) => (
@@ -329,7 +333,7 @@ export function ChatView({ employee }: { employee: Employee }) {
             </div>
           )}
           {status && (
-            <div key={status} className="flex animate-fade-in items-center gap-2 text-xs text-zinc-500">
+            <div key={status.text} className="flex animate-fade-in items-center gap-2 text-xs text-zinc-500">
               {!waiting.length && (running || queued?.status === 'queued') && (
                 <span className="inline-flex gap-1 rounded-full bg-zinc-100 px-2.5 py-2 dark:bg-zinc-800">
                   {[0, 150, 300].map((d) => (
@@ -337,7 +341,8 @@ export function ChatView({ employee }: { employee: Employee }) {
                   ))}
                 </span>
               )}
-              {status}
+              {status.icon && <Icon name={status.icon} className="h-3.5 w-3.5" />}
+              {status.text}
             </div>
           )}
         </div>
@@ -351,7 +356,7 @@ export function ChatView({ employee }: { employee: Employee }) {
         onSend={send}
         onStop={running ? () => act(() => api('POST', `/api/tasks/${running.id}/stop`)) : undefined}
         placeholder={
-          question ? 'Responda à pergunta acima, ou escreva sua resposta aqui…' : running ? 'Mandar agora (ele lê no meio do trabalho)…' : `Mensagem para ${employee.name}…`
+          question ? t.chat.answerPlaceholder : running ? t.chat.runningPlaceholder : t.chat.messageTo(employee.name)
         }
       />
     </div>
@@ -359,6 +364,7 @@ export function ChatView({ employee }: { employee: Employee }) {
 }
 
 function RowView({ row: r }: { row: Row }) {
+  const t = useT();
   const pending = useOffice((s) => ('approvalId' in r ? s.state.approvals.find((a) => a.id === r.approvalId) : undefined));
   switch (r.kind) {
     case 'user':
@@ -385,7 +391,10 @@ function RowView({ row: r }: { row: Row }) {
           <QuestionCard id={pending.id} who={null} payload={pending.payload} />
         </div>
       ) : (
-        <div className="mr-6 rounded-2xl rounded-bl-md bg-zinc-100 px-3.5 py-2 text-sm whitespace-pre-wrap dark:bg-zinc-800/70">❓ {r.text}</div>
+        <div className="mr-6 rounded-2xl rounded-bl-md bg-zinc-100 px-3.5 py-2 text-sm whitespace-pre-wrap dark:bg-zinc-800/70">
+          <Icon name="question" className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-blue-500" />
+          {r.text}
+        </div>
       );
     case 'approval':
       return pending ? <ApprovalCard approval={pending} compact /> : null;
@@ -394,12 +403,18 @@ function RowView({ row: r }: { row: Row }) {
         <details className="group text-xs text-zinc-500">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-full px-2 py-1 transition select-none hover:bg-zinc-100 dark:hover:bg-zinc-800 [&::-webkit-details-marker]:hidden">
             <Icon name="chevronRight" className="h-3 w-3 transition-transform duration-200 group-open:rotate-90" />
-            {summarizeTools(r.items)}
+            {summarizeTools(r.items).map((a, i) => (
+              <span key={a.icon} className="inline-flex items-center gap-1">
+                {i > 0 && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
+                <Icon name={a.icon} className="h-3 w-3" /> {a.text}
+              </span>
+            ))}
           </summary>
           <ul className="mt-1 ml-3 grid animate-fade-in gap-1 border-l border-zinc-200 pl-3 dark:border-zinc-800">
             {r.items.map((i) => (
               <li key={i.id} className="[overflow-wrap:anywhere]">
-                {actionOf(i.data.name)[1]} {i.data.description && <span className="text-zinc-600 dark:text-zinc-300">{i.data.description} </span>}
+                <Icon name={actionOf(i.data.name)[1]} className="mr-1 inline h-3 w-3 align-[-2px]" />
+                {i.data.description && <span className="text-zinc-600 dark:text-zinc-300">{i.data.description} </span>}
                 <span className="font-mono text-zinc-400">
                   {i.data.name.startsWith('mcp__office__') ? i.data.name.slice(12) : i.data.name === 'Bash' ? '' : `${i.data.name} `}
                   {i.data.summary}
@@ -410,11 +425,11 @@ function RowView({ row: r }: { row: Row }) {
         </details>
       );
     case 'todos': {
-      const done = r.todos.filter((t) => t.status === 'completed').length;
+      const done = r.todos.filter((x) => x.status === 'completed').length;
       return (
         <div className="mr-6 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-900">
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-zinc-500">
-            <Icon name="list" className="h-3.5 w-3.5" /> Plano
+            <Icon name="list" className="h-3.5 w-3.5" /> {t.chat.plan}
             <span className="ml-auto tabular-nums">
               {done}/{r.todos.length}
             </span>
@@ -423,18 +438,18 @@ function RowView({ row: r }: { row: Row }) {
             <div className="h-full origin-left rounded-full bg-emerald-500 transition-transform duration-500 ease-[var(--ease-out-expo)]" style={{ transform: `scaleX(${done / Math.max(1, r.todos.length)})` }} />
           </div>
           <ul className="grid gap-1">
-            {r.todos.map((t, i) => (
-              <li key={i} className={cx('flex items-start gap-2', t.status === 'completed' && 'text-zinc-400 line-through', t.status === 'in_progress' && 'font-medium')}>
+            {r.todos.map((x, i) => (
+              <li key={i} className={cx('flex items-start gap-2', x.status === 'completed' && 'text-zinc-400 line-through', x.status === 'in_progress' && 'font-medium')}>
                 <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center">
-                  {t.status === 'completed' ? (
+                  {x.status === 'completed' ? (
                     <Icon name="check" className="h-3.5 w-3.5 text-emerald-500" />
-                  ) : t.status === 'in_progress' ? (
+                  ) : x.status === 'in_progress' ? (
                     <Spinner className="h-3.5 w-3.5 text-blue-500" />
                   ) : (
                     <span className="h-2.5 w-2.5 rounded-full border border-zinc-300 dark:border-zinc-600" />
                   )}
                 </span>
-                {t.status === 'in_progress' ? (t.activeForm ?? t.content) : t.content}
+                {x.status === 'in_progress' ? (x.activeForm ?? x.content) : x.content}
               </li>
             ))}
           </ul>
@@ -446,20 +461,20 @@ function RowView({ row: r }: { row: Row }) {
         <details className={cx('group text-xs', r.tone === 'warn' ? 'text-red-600 dark:text-red-400' : 'text-zinc-500')}>
           <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-full px-2 py-1 transition select-none hover:bg-zinc-100 dark:hover:bg-zinc-800 [&::-webkit-details-marker]:hidden">
             <Icon name="chevronRight" className="h-3 w-3 transition-transform duration-200 group-open:rotate-90" />
-            {r.icon} {r.text}
+            <Icon name={r.icon} className="h-3 w-3" /> {r.text}
           </summary>
           <p className="mt-1 ml-3 animate-fade-in border-l border-zinc-200 pl-3 whitespace-pre-wrap [overflow-wrap:anywhere] dark:border-zinc-800">{r.detail}</p>
         </details>
       ) : (
-        <div className={cx('px-2 text-xs', r.tone === 'warn' ? 'text-red-600 dark:text-red-400' : 'text-zinc-500')}>
-          {r.icon} {r.text}
+        <div className={cx('flex items-center gap-1 px-2 text-xs', r.tone === 'warn' ? 'text-red-600 dark:text-red-400' : 'text-zinc-500')}>
+          <Icon name={r.icon} className="h-3 w-3" /> {r.text}
         </div>
       );
     case 'run':
       return (
         <div className="flex items-center gap-2 pt-2 text-[11px] font-medium text-violet-600 dark:text-violet-400">
           <span className="h-px flex-1 bg-violet-200 dark:bg-violet-900/60" />
-          <Icon name="repeat" className="h-3 w-3" /> Execução das {clock(r.ts)}
+          <Icon name="repeat" className="h-3 w-3" /> {t.chat.runAt(clock(r.ts))}
           <span className="h-px flex-1 bg-violet-200 dark:bg-violet-900/60" />
         </div>
       );
@@ -468,7 +483,7 @@ function RowView({ row: r }: { row: Row }) {
         <div className="grid gap-1">
           <div className={cx('flex items-center gap-2 text-[11px]', r.status === 'failed' ? 'text-red-600' : 'text-zinc-400')}>
             <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-            <Chip tone={STATUS[r.status as keyof typeof STATUS]?.tone ?? 'default'}>{STATUS[r.status as keyof typeof STATUS]?.label ?? r.status}</Chip>
+            <Chip tone={STATUS_TONE[r.status as keyof typeof STATUS_TONE] ?? 'default'}>{statusLabel(r.status)}</Chip>
             {r.cost > 0 && money(r.cost)}
             <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
           </div>
@@ -482,6 +497,7 @@ function RowView({ row: r }: { row: Row }) {
 const drafts = new Map<number, string>();
 
 function Composer(p: { draftKey: number; busy: boolean; disabled: boolean; placeholder: string; onSend: (text: string) => Promise<boolean>; onStop?: () => void }) {
+  const t = useT();
   const [text, setTextState] = useState(() => drafts.get(p.draftKey) ?? '');
   const setText = (v: string) => {
     drafts.set(p.draftKey, v);
@@ -508,20 +524,20 @@ function Composer(p: { draftKey: number; busy: boolean; disabled: boolean; place
               submit();
             }
           }}
-          placeholder={p.disabled ? 'Aguardando o turno na fila…' : p.placeholder}
+          placeholder={p.disabled ? t.chat.queuedPlaceholder : p.placeholder}
           className="max-h-40 w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-zinc-400"
         />
         <div className="flex items-center gap-2 px-2 pb-2">
           <span className="flex-1 pl-1 text-[11px] text-zinc-400">
-            <b className="font-medium">Enter</b> envia · <b className="font-medium">Shift+Enter</b> quebra linha
+            <Rich text={t.chat.keys} />
           </span>
           {p.onStop && (
             <Button variant="danger" size="sm" icon="stop" onClick={p.onStop}>
-              Parar
+              {t.chat.stop}
             </Button>
           )}
           <Button variant="primary" size="sm" icon={p.busy ? 'zap' : 'arrowUp'} busy={sending} disabled={!text.trim() || p.disabled} onClick={submit}>
-            {p.busy ? 'Mandar agora' : 'Enviar'}
+            {p.busy ? t.chat.sendNow : t.common.send}
           </Button>
         </div>
       </div>

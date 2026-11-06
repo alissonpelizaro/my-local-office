@@ -48,3 +48,27 @@ test('recusa o que já começou ou execução de série na fila', () => {
   assert.throws(() => office.updateTask(s.id, { title: 'x' }), { status: 409 });
   assert.throws(() => office.updateTask(999, { title: 'x' }), { status: 409 });
 });
+
+test('estagiário: sem repo, pasta própria, sem worktree nem onboarding', () => {
+  const e = office.createEmployee({ kind: 'intern', name: 'Ana', departmentId: 1, profile: 'Pesquisa' });
+  assert.equal(e.kind, 'intern');
+  assert.equal(e.git_remote, null);
+  assert.ok(fs.existsSync(e.repo_path));
+  assert.throws(() => office.onboard(e.id), { status: 400 });
+  const u = office.updateEmployee(e.id, { isolation: 'worktree', maxParallel: 3 })!;
+  assert.equal(u.isolation, 'repo');
+  assert.equal(u.max_parallel, 1);
+  assert.throws(() => office.createEmployee({ kind: 'intern', name: 'ana', departmentId: 1 }), { status: 409 });
+  assert.throws(() => office.createEmployee({ kind: 'intern', name: 'Bia', departmentId: 99 }), { status: 404 });
+  assert.match(office.directory(), /Ana \(intern/);
+});
+
+test('troca provedor e modelo do departamento inteiro', () => {
+  run(`INSERT INTO providers (id, name, format, base_url, model) VALUES (7, 'p', 'openai', 'http://x', 'm')`);
+  const { updated } = office.setDepartmentModel(1, { providerId: 7, model: 'opus' });
+  assert.ok(updated >= 2);
+  assert.equal(get<any>('SELECT COUNT(*) AS n FROM employees WHERE department_id = 1 AND (provider_id != 7 OR model != ?)', 'opus').n, 0);
+  office.setDepartmentModel(1, { providerId: null, model: '' });
+  assert.equal(get<any>('SELECT COUNT(*) AS n FROM employees WHERE provider_id IS NOT NULL OR model IS NOT NULL').n, 0);
+  assert.throws(() => office.setDepartmentModel(1, { providerId: 999 }), { status: 404 });
+});

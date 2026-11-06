@@ -9,7 +9,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { initials, STATUS, WORKING } from '../format';
+import { initials, statusLabel, WORKING } from '../format';
+import { useT } from '../store';
 import type { Activity, TaskStatus } from '../types';
 import { Icon, type IconName } from './icons';
 
@@ -47,8 +48,15 @@ export function Button({ variant = 'secondary', size = 'md', icon, busy, classNa
   );
 }
 
-// Ação destrutiva em dois cliques: o primeiro arma, o segundo confirma (desarma sozinho).
-export function ConfirmButton({ confirm, onConfirm, children, ...p }: Omit<ButtonProps, 'onClick'> & { confirm: string; onConfirm: () => void }) {
+// Ação destrutiva (ou em lote) em dois cliques: o primeiro arma, o segundo confirma (desarma sozinho).
+export function ConfirmButton({
+  confirm,
+  onConfirm,
+  children,
+  idle = 'danger',
+  armedVariant = 'solidDanger',
+  ...p
+}: Omit<ButtonProps, 'onClick' | 'variant'> & { confirm: string; onConfirm: () => void; idle?: keyof typeof BUTTON; armedVariant?: keyof typeof BUTTON }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     if (!armed) return;
@@ -56,11 +64,20 @@ export function ConfirmButton({ confirm, onConfirm, children, ...p }: Omit<Butto
     return () => clearTimeout(t);
   }, [armed]);
   return (
-    <Button {...p} variant={armed ? 'solidDanger' : 'danger'} onClick={() => (armed ? (setArmed(false), onConfirm()) : setArmed(true))} onBlur={() => setArmed(false)}>
+    <Button {...p} variant={armed ? armedVariant : idle} onClick={() => (armed ? (setArmed(false), onConfirm()) : setArmed(true))} onBlur={() => setArmed(false)}>
       <span key={String(armed)} className="animate-fade-in">
         {armed ? confirm : children}
       </span>
     </Button>
+  );
+}
+
+// Texto traduzido com **negrito**.
+export function Rich({ text }: { text: string }) {
+  return (
+    <>
+      {text.split('**').map((part, i) => (i % 2 ? <b key={i} className="font-semibold">{part}</b> : part))}
+    </>
   );
 }
 
@@ -125,6 +142,7 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
 
 // Número com − e +; digitar confirma ao sair do campo.
 export function Stepper({ value, onChange, min = 0, max = 999, step = 1 }: { value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number }) {
+  const t = useT();
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   const commit = (v: number) => {
@@ -134,7 +152,7 @@ export function Stepper({ value, onChange, min = 0, max = 999, step = 1 }: { val
   };
   return (
     <div className="inline-flex h-9 items-center rounded-lg border border-zinc-200 bg-white shadow-xs dark:border-zinc-700/80 dark:bg-zinc-900">
-      <button type="button" aria-label="Diminuir" disabled={value <= min} onClick={() => commit(value - step)} className="grid h-full w-8 place-items-center text-zinc-500 transition hover:text-zinc-900 active:scale-90 disabled:opacity-30 dark:hover:text-zinc-100">
+      <button type="button" aria-label={t.common.decrease} disabled={value <= min} onClick={() => commit(value - step)} className="grid h-full w-8 place-items-center text-zinc-500 transition hover:text-zinc-900 active:scale-90 disabled:opacity-30 dark:hover:text-zinc-100">
         <Icon name="minus" className="h-3.5 w-3.5" />
       </button>
       <input
@@ -145,7 +163,7 @@ export function Stepper({ value, onChange, min = 0, max = 999, step = 1 }: { val
         onKeyDown={(e) => e.key === 'Enter' && commit(Number(draft))}
         className="w-10 bg-transparent text-center text-sm font-medium tabular-nums outline-none"
       />
-      <button type="button" aria-label="Aumentar" disabled={value >= max} onClick={() => commit(value + step)} className="grid h-full w-8 place-items-center text-zinc-500 transition hover:text-zinc-900 active:scale-90 disabled:opacity-30 dark:hover:text-zinc-100">
+      <button type="button" aria-label={t.common.increase} disabled={value >= max} onClick={() => commit(value + step)} className="grid h-full w-8 place-items-center text-zinc-500 transition hover:text-zinc-900 active:scale-90 disabled:opacity-30 dark:hover:text-zinc-100">
         <Icon name="plus" className="h-3.5 w-3.5" />
       </button>
     </div>
@@ -326,17 +344,21 @@ export function StatusIcon({ status, repeat }: { status: TaskStatus; repeat?: bo
   const s = STATUS_ICON[status];
   const icon = repeat && status === 'scheduled' ? 'repeat' : s.icon;
   return (
-    <span title={STATUS[status].label} className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-full', s.className)}>
+    <span title={statusLabel(status)} className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-full', s.className)}>
       {icon ? <Icon name={icon} className="h-4 w-4" /> : <Spinner className="h-5 w-5" />}
     </span>
   );
 }
 
-export function Empty({ icon, title, children, action }: { icon?: string; title?: ReactNode; children?: ReactNode; action?: ReactNode }) {
+export function Empty({ icon, title, children, action }: { icon?: IconName; title?: ReactNode; children?: ReactNode; action?: ReactNode }) {
   if (!title && !icon) return <p className="py-2 text-sm text-zinc-500">{children}</p>;
   return (
     <div className="grid animate-fade-in justify-items-center gap-2 px-4 py-10 text-center">
-      {icon && <div className="mb-1 grid h-12 w-12 place-items-center rounded-2xl bg-zinc-900/5 text-2xl dark:bg-white/5">{icon}</div>}
+      {icon && (
+        <div className="mb-1 grid h-12 w-12 place-items-center rounded-2xl bg-zinc-900/5 text-zinc-500 dark:bg-white/5 dark:text-zinc-400">
+          <Icon name={icon} className="h-6 w-6" />
+        </div>
+      )}
       {title && <div className="text-sm font-semibold">{title}</div>}
       {children && <p className="max-w-xs text-sm text-zinc-500">{children}</p>}
       {action && <div className="mt-2">{action}</div>}
@@ -350,13 +372,15 @@ export const Skeleton = ({ className }: { className?: string }) => (
   </div>
 );
 
-// "Salvo ✓" que aparece e some sozinho a cada salvamento.
-export const Saved = ({ at }: { at: number }) =>
-  at ? (
+// "Salvo" com check que aparece e some sozinho a cada salvamento.
+export function Saved({ at }: { at: number }) {
+  const t = useT();
+  return at ? (
     <span key={at} className="inline-flex animate-flash items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-      <Icon name="check" className="h-3.5 w-3.5" /> Salvo
+      <Icon name="check" className="h-3.5 w-3.5" /> {t.common.saved}
     </span>
   ) : null;
+}
 
 // ---------- diálogos (dialog nativo: foco preso, Esc e camada de topo de graça) ----------
 

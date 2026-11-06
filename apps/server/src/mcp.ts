@@ -8,41 +8,41 @@ const str = (description: string) => ({ type: 'string', description });
 const TOOLS = [
   {
     name: 'directory',
-    description: 'Lista os departamentos e funcionários do escritório, com a ficha de cada um (repositório, propósito, stack). Use para descobrir quem é responsável por qual repositório.',
+    description: 'Lists the office departments and employees, with each one\'s profile (repository, purpose, stack). Use it to find out who is responsible for which repository.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'ask_colleague',
     description:
-      'Pergunta algo ao funcionário responsável por outro repositório e espera a resposta. Ele só lê o código dele (Read, Grep, Glob): sem shell, sem gh, sem alterar nada. Use em vez de ler outros repositórios diretamente; para qualquer ação no repositório dele (mudar código, revisar ou aprovar PR, rodar comando), use delegate_task.',
+      'Asks the employee responsible for another repository something and waits for the answer. They only read their own code (read-only tools, git and gh): nothing is changed. Use it instead of reading other repositories directly; for any action in their repository (change code, review or approve a PR, run a command), use delegate_task.',
     inputSchema: {
       type: 'object',
-      properties: { to: str('Nome do funcionário (veja directory)'), question: str('Pergunta autocontida, com o contexto necessário') },
+      properties: { to: str('Employee name (see directory)'), question: str('Self-contained question, with the context needed') },
       required: ['to', 'question'],
     },
   },
   {
     name: 'delegate_task',
     description:
-      'Cria uma task para outro funcionário quando algo precisa ser feito no repositório dele (mudar código, revisar ou aprovar PR, rodar comando). Pode exigir aprovação do chefe e roda de forma independente: não espera a conclusão.',
+      'Creates a task for another employee when something must be done in their repository (change code, review or approve a PR, run a command). It may need the boss\'s approval and runs independently: it does not wait for completion.',
     inputSchema: {
       type: 'object',
-      properties: { to: str('Nome do funcionário (veja directory)'), title: str('Título curto da task'), description: str('O que fazer, por quê e critérios de pronto') },
+      properties: { to: str('Employee name (see directory)'), title: str('Short task title'), description: str('What to do, why and the definition of done') },
       required: ['to', 'title', 'description'],
     },
   },
   {
     name: 'ask_boss',
-    description: 'Faz uma pergunta ao chefe (o usuário) e espera a resposta. Use para decisões que não cabem a você.',
+    description: 'Asks the boss (the user) a question and waits for the answer. Use it for decisions that are not yours to make.',
     inputSchema: {
       type: 'object',
-      properties: { question: str('Pergunta'), options: { type: 'array', items: { type: 'string' }, description: 'Opções sugeridas (opcional)' } },
+      properties: { question: str('Question'), options: { type: 'array', items: { type: 'string' }, description: 'Suggested options (optional)' } },
       required: ['question'],
     },
   },
   {
     name: 'approve',
-    description: 'Uso interno do sistema de permissões do escritório. Não chame diretamente.',
+    description: 'Internal use by the office permission system. Do not call it directly.',
     inputSchema: {
       type: 'object',
       properties: { tool_name: { type: 'string' }, input: { type: 'object' }, tool_use_id: { type: 'string' } },
@@ -64,7 +64,7 @@ async function callTool(ctx: RunContext, name: string, a: any): Promise<string> 
     case 'ask_boss':
       return office.askBoss(ctx, a.question, a.options);
   }
-  throw new Error(`tool desconhecida: ${name}`);
+  throw new Error(`unknown tool: ${name}`);
 }
 
 type Rpc = { jsonrpc: '2.0'; id?: string | number | null; method?: string; params?: any };
@@ -88,7 +88,7 @@ async function dispatch(ctx: RunContext, m: Rpc) {
         return { content: [{ type: 'text', text: (e as Error).message }], isError: true };
       }
   }
-  throw Object.assign(new Error(`método não suportado: ${m.method}`), { code: -32601 });
+  throw Object.assign(new Error(`unsupported method: ${m.method}`), { code: -32601 });
 }
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
@@ -99,7 +99,7 @@ const json = (res: ServerResponse, status: number, body: unknown) => {
 export async function handleMcp(req: IncomingMessage, res: ServerResponse, body: Rpc | Rpc[]) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
   const r = token ? runByToken(token) : undefined;
-  if (!r) return json(res, 401, { jsonrpc: '2.0', id: null, error: { code: -32001, message: 'execução desconhecida' } });
+  if (!r) return json(res, 401, { jsonrpc: '2.0', id: null, error: { code: -32001, message: 'unknown run' } });
 
   const replies = [];
   for (const m of Array.isArray(body) ? body : [body]) {

@@ -1,14 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { money } from '../format';
-import { api, toast, useOffice } from '../store';
+import { money, shortDate } from '../format';
+import { api, toast, useOffice, useT } from '../store';
 import type { Costs } from '../types';
 import { Avatar, Card, cx, Dot, Empty, Segmented, Skeleton } from './ui';
 
-const KINDS: [string, string][] = [
-  ['task', 'Tarefas'],
-  ['consult', 'Consultas'],
-  ['onboard', 'Onboarding'],
-];
+const KINDS = ['task', 'consult', 'onboard'];
 
 // Série contínua de dias: dia sem uso vira barra zero, em vez de sumir do eixo.
 function fillDays(byDay: Costs['byDay'], days: number) {
@@ -19,9 +15,10 @@ function fillDays(byDay: Costs['byDay'], days: number) {
   });
 }
 
-const shortDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
+const shortDay = (day: string) => shortDate(`${day}T12:00:00Z`, { day: '2-digit', month: 'short' });
 
 export function CostsTab() {
+  const t = useT();
   const departments = useOffice((s) => s.state.departments);
   // Recarrega quando alguma task termina.
   const finished = useOffice((s) => s.state.tasks.filter((t) => t.finished_at).length);
@@ -42,26 +39,24 @@ export function CostsTab() {
     <div className="mx-auto grid max-w-5xl gap-5 p-4 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Custos</h1>
-          <p className="mt-1 max-w-xl text-sm text-zinc-500">
-            Valor que o Claude Code reporta por execução (preço de API). Na assinatura não é cobrado: serve para comparar quem consome mais do seu limite.
-          </p>
+          <h1 className="text-xl font-semibold">{t.costs.title}</h1>
+          <p className="mt-1 max-w-xl text-sm text-zinc-500">{t.costs.subtitle}</p>
         </div>
-        <Segmented value={days} onChange={setDays} options={[7, 30, 90].map((d) => ({ value: d, label: `${d} dias` }))} />
+        <Segmented value={days} onChange={setDays} options={[7, 30, 90].map((d) => ({ value: d, label: t.costs.days(d) }))} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label={`Total em ${days} dias`} value={data ? money(data.total) : null} big />
-        <Stat label="Média por dia" value={data ? money(data.total / days) : null} />
-        <Stat label="Execuções" value={data ? String(runs) : null} />
-        <Stat label="Quem mais gastou" value={data ? (top?.name ?? '—') : null} sub={top ? money(top.total) : undefined} />
+        <Stat label={t.costs.totalIn(days)} value={data ? money(data.total) : null} big />
+        <Stat label={t.costs.perDay} value={data ? money(data.total / days) : null} />
+        <Stat label={t.costs.runs} value={data ? String(runs) : null} />
+        <Stat label={t.costs.top} value={data ? (top?.name ?? '—') : null} sub={top ? money(top.total) : undefined} />
       </div>
 
-      <Card title="Por dia">
+      <Card title={t.costs.byDay}>
         {!data ? (
           <Skeleton className="h-40 w-full" />
         ) : data.total === 0 ? (
-          <Empty icon="📊" title="Sem execuções no período" />
+          <Empty icon="chart" title={t.costs.noRuns} />
         ) : (
           <>
             <div key={days} className="flex h-40 items-end gap-[3px]">
@@ -80,20 +75,20 @@ export function CostsTab() {
             <div className="mt-2 flex justify-between text-[11px] text-zinc-400">
               <span>{shortDay(series[0].day)}</span>
               <span>{shortDay(series[Math.floor(series.length / 2)].day)}</span>
-              <span>hoje</span>
+              <span>{t.costs.today}</span>
             </div>
           </>
         )}
       </Card>
 
       <div className="grid gap-5 md:grid-cols-[1fr_2fr]">
-        <Card title="Por departamento">
+        <Card title={t.costs.byDept}>
           <div className="grid gap-3">
             {data?.byDepartment.map((d, i) => (
               <div key={d.departmentId ?? 'x'} className="text-sm">
                 <div className="flex items-center gap-2">
                   <Dot color={dept(d.departmentId)?.color ?? '#999'} />
-                  <span className="flex-1 truncate">{dept(d.departmentId)?.name ?? 'Removido'}</span>
+                  <span className="flex-1 truncate">{dept(d.departmentId)?.name ?? t.common.removed}</span>
                   <b className="tabular-nums">{money(d.total)}</b>
                 </div>
                 <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
@@ -109,18 +104,18 @@ export function CostsTab() {
           </div>
         </Card>
 
-        <Card title="Por funcionário">
+        <Card title={t.costs.byEmployee}>
           <div className="-mx-2 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-zinc-500">
-                  <th className="px-2 py-1.5 font-medium">Funcionário</th>
-                  {KINDS.map(([, label]) => (
-                    <th key={label} className="px-2 py-1.5 text-right font-medium">
-                      {label}
+                  <th className="px-2 py-1.5 font-medium">{t.costs.employee}</th>
+                  {KINDS.map((kind) => (
+                    <th key={kind} className="px-2 py-1.5 text-right font-medium">
+                      {t.costs.kinds[kind]}
                     </th>
                   ))}
-                  <th className="px-2 py-1.5 text-right font-medium">Total</th>
+                  <th className="px-2 py-1.5 text-right font-medium">{t.costs.total}</th>
                 </tr>
               </thead>
               <tbody>
@@ -133,7 +128,7 @@ export function CostsTab() {
                         <span className="text-xs text-zinc-400">{e.runs}×</span>
                       </span>
                     </td>
-                    {KINDS.map(([kind]) => (
+                    {KINDS.map((kind) => (
                       <td key={kind} className="px-2 py-2 text-right text-zinc-600 tabular-nums dark:text-zinc-400">
                         {e.byKind[kind] ? money(e.byKind[kind]) : '—'}
                       </td>

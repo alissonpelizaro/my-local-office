@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DICTS, isLang, type Lang } from './i18n';
 import type { ChatTarget, Models, OfficeEvent, OfficeState, Task } from './types';
 
 export async function api<T = unknown>(method: string, url: string, body?: unknown): Promise<T> {
@@ -15,26 +16,53 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
 export type Tab = 'office' | 'tasks' | 'costs' | 'config';
 export type PanelTab = 'chat' | 'history' | 'settings';
 export type TaskView = 'active' | 'planned' | 'history';
-export type ConfigSection = 'team' | 'import' | 'providers' | 'office';
+export type ConfigSection = 'team' | 'import' | 'providers' | 'office' | 'about';
 export type Theme = 'light' | 'dark' | 'system';
 type Toast = { id: number; text: string; tone: 'error' | 'info' | 'success'; action?: { label: string; run: () => void }; leaving?: boolean };
+
+// localStorage pode lançar (modo privado, dados bloqueados): o app funciona sem ele.
+const stored = (k: string) => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const store = (k: string, v: string) => {
+  try {
+    localStorage.setItem(k, v);
+  } catch {}
+};
 
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
 const resolveDark = (t: Theme) => t === 'dark' || (t === 'system' && prefersDark.matches);
 const storedTheme = ((): Theme => {
-  const t = localStorage.getItem('theme');
+  const t = stored('theme');
   return t === 'light' || t === 'dark' || t === 'system' ? t : 'system';
 })();
 document.documentElement.classList.toggle('dark', resolveDark(storedTheme));
 prefersDark.addEventListener('change', () => {
   if (get().theme === 'system') setTheme('system');
 });
+// Idioma salvo localmente só para a tela de carregamento; o que vale é o da Configuração (servidor).
+const storedLang = ((): Lang => {
+  const l = stored('lang');
+  return isLang(l) ? l : 'en';
+})();
+document.documentElement.lang = storedLang;
 
 type Store = {
   state: OfficeState;
   loaded: boolean;
   loadFailed: boolean;
+  officeReady: boolean; // cena do escritório desenhada (a tela de carregamento espera por ela)
+  lang: Lang;
+  setup: boolean; // assistente de configuração aberto
+  hire: { departmentId?: number } | null; // diálogo de contratação
+  newDept: boolean;
+  deptModel: number | null; // diálogo de modelo do departamento
   connected: boolean;
+  connectionLost: boolean; // a SSE caiu (ou nunca abriu por erro): só então avisa que está offline
   events: OfficeEvent[];
   tab: Tab;
   theme: Theme;
@@ -59,6 +87,7 @@ const EMPTY: OfficeState = {
   providers: [],
   tasks: [],
   approvals: [],
+  app: { version: '', latest: null, releaseUrl: null, checkedAt: null, canUpdate: false, updating: false, error: null, available: false },
   settings: {
     maxConcurrent: 3,
     delegationNeedsApproval: true,
@@ -67,7 +96,9 @@ const EMPTY: OfficeState = {
     consultModel: 'sonnet',
     defaultEffort: '',
     compactWindow: 200_000,
-    importRoot: '~/webprojects',
+    language: storedLang,
+    onboardingDone: true,
+    importRoot: '~',
     notifyApprovals: true,
     notifyTaskFinished: true,
     autoAllowReadOnly: true,
@@ -80,7 +111,14 @@ export const useOffice = create<Store>(() => ({
   state: EMPTY,
   loaded: false,
   loadFailed: false,
+  officeReady: false,
+  lang: storedLang,
+  setup: false,
+  hire: null,
+  newDept: false,
+  deptModel: null,
   connected: false,
+  connectionLost: false,
   events: [],
   tab: 'office',
   theme: storedTheme,
@@ -112,9 +150,29 @@ export const openEditTask = (task: Task) => set({ newTask: { employeeId: task.em
 export const closeNewTask = () => set({ newTask: null });
 export const setInbox = (inbox: boolean) => set({ inbox, palette: false });
 export const setPalette = (palette: boolean) => set({ palette });
+export const setOfficeReady = () => set({ officeReady: true });
+export const openSetup = (setup = true) => set({ setup, palette: false });
+export const openHire = (departmentId?: number) => set({ hire: { departmentId }, palette: false });
+export const closeHire = () => set({ hire: null });
+export const openNewDept = (newDept = true) => set({ newDept, palette: false });
+export const openDeptModel = (deptModel: number | null) => set({ deptModel });
+
+// Dicionário do idioma ativo: useT() nos componentes, tr() fora do React (toasts, cena, formatação).
+export const useT = () => DICTS[useOffice((s) => s.lang)];
+export const tr = () => DICTS[get().lang];
+
+function applyLang(lang: Lang) {
+  store('lang', lang);
+  document.documentElement.lang = lang;
+  if (get().lang !== lang) set({ lang });
+}
+export async function setLanguage(lang: Lang) {
+  applyLang(lang);
+  await act(() => api('PATCH', '/api/settings', { language: lang }));
+}
 
 export function setTheme(theme: Theme) {
-  localStorage.setItem('theme', theme);
+  store('theme', theme);
   const dark = resolveDark(theme);
   const swap = () => {
     document.documentElement.classList.toggle('dark', dark);
@@ -139,12 +197,19 @@ export function toast(text: string, tone: Toast['tone'] = 'error', action?: Toas
   setTimeout(() => dismissToast(id), TOAST_MS);
 }
 
+// Versão do servidor quando a página abriu: mudou (atualização terminou), recarrega para pegar a UI nova.
+let bootVersion: string | null = null;
+
 export async function refresh() {
   try {
-    set({ state: await api<OfficeState>('GET', '/api/state'), loaded: true, loadFailed: false });
+    const state = await api<OfficeState>('GET', '/api/state');
+    bootVersion ??= state.app.version;
+    if (state.app.version !== bootVersion) return location.reload();
+    if (isLang(state.settings.language)) applyLang(state.settings.language);
+    set({ state, loaded: true, loadFailed: false });
   } catch (e) {
     set({ loadFailed: true });
-    toast(`Falha ao carregar estado: ${(e as Error).message}`);
+    if (get().loaded) toast(tr().common.loadStateFailed((e as Error).message));
   }
 }
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -199,10 +264,10 @@ export function connect() {
   let openedAt = Date.now();
   es.onopen = () => {
     openedAt = Date.now();
-    set({ connected: true });
+    set({ connected: true, connectionLost: false });
     loadModels();
   };
-  es.onerror = () => set({ connected: false });
+  es.onerror = () => set({ connected: false, connectionLost: true });
   es.onmessage = (m) => {
     const e: OfficeEvent = JSON.parse(m.data);
     const s = get();
@@ -226,7 +291,7 @@ let replayTimer: ReturnType<typeof setTimeout> | undefined;
 export async function startReplay(taskId: number) {
   stopReplay();
   const events = await api<OfficeEvent[]>('GET', `/api/tasks/${taskId}/events`).catch((e) => (toast(e.message), []));
-  if (!events.length) return toast('Task sem eventos para assistir.', 'info');
+  if (!events.length) return toast(tr().log.empty, 'info');
   set({ replay: { taskId, total: events.length, index: 0 }, tab: 'office' });
   emit(marker('replay.start', taskId), true);
   let i = 0;

@@ -3,3 +3,4 @@ data/
 .DS_Store
 apps/web/dist/
 apps/server/db.sqlite
+/dist/

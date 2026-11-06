@@ -1,10 +1,13 @@
 // Office View: desenha a planta em isométrico (sem assets, tudo em Graphics) e anima os eventos do escritório.
 import Phaser from 'phaser';
-import { ACTIVITY, truncate } from '../format';
+import type { IconName } from '../components/icons';
+import { ACTIVITY_ICON, truncate } from '../format';
+import { tr } from '../store';
 import type { Activity, OfficeEvent, OfficeState } from '../types';
 import * as D from './draw';
+import { iconKey, loadIcons } from './icons';
 import { computeFloorplan, type Floorplan, iso, type LeisureSpot, type Pt, type Room, place, route, type Seg, WALL, WALL_CUT } from './layout';
-import type { Item } from './rooms';
+import { type Item, LEISURE } from './rooms';
 
 const { pt, mix, darken } = D;
 
@@ -45,6 +48,10 @@ const TOOL_ACTIVITY: Record<string, Activity> = {
   mcp__office__ask_boss: 'waiting',
 };
 
+// Ícones que sobem da cabeça: tarefa nova e fim de tarefa.
+const FINISH = { done: ['circleCheck', 0x16a34a], cancelled: ['ban', 0x64748b], failed: ['circleX', 0xdc2626] } as const satisfies Record<string, readonly [IconName, number]>;
+const FLOATS: IconName[] = ['inbox', ...Object.values(FINISH).map(([i]) => i)];
+
 const hex = (c: string) => Phaser.Display.Color.HexStringToColor(c).color;
 const hash = (s: string) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 
@@ -55,7 +62,8 @@ type Char = {
   figure: Phaser.GameObjects.Container;
   front: Phaser.GameObjects.Graphics;
   back: Phaser.GameObjects.Graphics;
-  icon: Phaser.GameObjects.Text;
+  icon: Phaser.GameObjects.Container; // ícone da atividade num selo sobre a cabeça
+  iconImage: Phaser.GameObjects.Image;
   label: Phaser.GameObjects.Text;
   ring: Phaser.GameObjects.Ellipse;
   screen: Phaser.GameObjects.Graphics;
@@ -84,8 +92,8 @@ export class OfficeScene extends Phaser.Scene {
   onReady: () => void = () => {};
 
   private ready = false;
-  private incoming?: { state: OfficeState; selected: number | null };
-  private applied?: { state: OfficeState; selected: number | null };
+  private incoming?: { state: OfficeState; selected: number | null; lang: string };
+  private applied?: { state: OfficeState; selected: number | null; lang: string };
   private signature = '';
   private plan?: Floorplan;
   private statics: Phaser.GameObjects.GameObject[] = [];
@@ -103,6 +111,15 @@ export class OfficeScene extends Phaser.Scene {
   constructor() {
     super('office');
   }
+
+  preload() {
+    const spots = LEISURE.flatMap((b) => b.spots.map((s) => s.icon));
+    loadIcons(this, [...Object.values(ACTIVITY_ICON), ...spots, ...FLOATS, 'question', 'file', 'message', 'briefcase']);
+  }
+
+  // O Phaser escuta o mouseup na janela inteira: soltar o clique fora do canvas (em outra aba, num diálogo ou num
+  // botão por cima da cena) dispararia o pointerup do que estiver por baixo. Só vale clique que começou e terminou nele.
+  private tapped = (p: Phaser.Input.Pointer) => p.downElement === this.game.canvas && p.upElement === this.game.canvas && p.getDistance() < 6;
 
   create() {
     const cam = this.cameras.main;
@@ -140,8 +157,8 @@ export class OfficeScene extends Phaser.Scene {
 
   // ---------- dados vindos do React ----------
 
-  setData(state: OfficeState, selected: number | null) {
-    this.incoming = { state, selected };
+  setData(state: OfficeState, selected: number | null, lang: string) {
+    this.incoming = { state, selected, lang };
     if (this.ready) this.apply();
   }
 
@@ -177,10 +194,10 @@ export class OfficeScene extends Phaser.Scene {
 
   private apply() {
     const next = this.incoming;
-    if (!next || (this.applied?.state === next.state && this.applied.selected === next.selected)) return;
+    if (!next || (this.applied?.state === next.state && this.applied.selected === next.selected && this.applied.lang === next.lang)) return;
     this.applied = next;
     const { state, selected } = next;
-    const sig = JSON.stringify([state.departments.map((d) => [d.id, d.name, d.color]), state.employees.map((e) => [e.id, e.name, e.department_id])]);
+    const sig = JSON.stringify([next.lang, state.departments.map((d) => [d.id, d.name, d.color]), state.employees.map((e) => [e.id, e.name, e.department_id])]);
     if (sig !== this.signature) {
       this.signature = sig;
       this.rebuild(state);
@@ -289,7 +306,7 @@ export class OfficeScene extends Phaser.Scene {
     const sign = pt(r.door.gx, r.row === 0 ? r.gy + r.d : r.gy, r.walls ? WALL_CUT : 10);
     this.keep(
       this.add
-        .text(sign.x, sign.y, r.name, { fontFamily: FONT, fontSize: '12px', fontStyle: 'bold', color: '#ffffff', backgroundColor: r.color, padding: { x: 6, y: 2 }, resolution: 2 })
+        .text(sign.x, sign.y, r.kind === 'dept' ? r.name : (tr().office.rooms[r.id] ?? r.name), { fontFamily: FONT, fontSize: '12px', fontStyle: 'bold', color: '#ffffff', backgroundColor: r.color, padding: { x: 6, y: 2 }, resolution: 2 })
         .setOrigin(0.5, 0.5)
         .setDepth(LABEL_DEPTH),
     );
@@ -379,7 +396,7 @@ export class OfficeScene extends Phaser.Scene {
     this.tweens.add({ targets: badge, scale: 1.15, duration: 600, yoyo: true, repeat: -1 });
     const center = pt(desk.gx + 1.3, desk.gy + 0.5, 10);
     const zone = this.keep(this.add.zone(center.x, center.y, 120, 70).setInteractive({ useHandCursor: true }));
-    zone.on('pointerup', (p: Phaser.Input.Pointer) => p.getDistance() < 6 && this.onBoss());
+    zone.on('pointerup', (p: Phaser.Input.Pointer) => this.tapped(p) && this.onBoss());
     this.pile = { g, badge, count, desk };
   }
 
@@ -521,14 +538,15 @@ export class OfficeScene extends Phaser.Scene {
     const front = this.drawPerson(h, shirt, 'front').setVisible(false);
     const back = this.drawPerson(h, shirt, 'back');
     const figure = this.add.container(0, 0, [front, back]);
-    const icon = this.add.text(0, -46, '', { fontFamily: FONT, fontSize: '14px', resolution: 2 }).setOrigin(0.5, 1);
+    const iconImage = this.add.image(0, 0, iconKey('coffee')).setDisplaySize(11, 11);
+    const icon = this.add.container(0, -54, [this.add.circle(0, 0, 9, 0x0f172a, 0.78).setStrokeStyle(1, 0xffffff, 0.5), iconImage]).setVisible(false);
     // Nome fica numa camada acima dos móveis para não sumir atrás da mesa da frente.
     const label = this.add
       .text(pos.x, pos.y + 5, name, { fontFamily: FONT, fontSize: '10px', color: '#ffffff', backgroundColor: 'rgba(15,23,42,0.78)', padding: { x: 4, y: 1 }, resolution: 2 })
       .setOrigin(0.5, 0)
       .setDepth(LABEL_DEPTH - 1);
     const hit = this.add.rectangle(0, -18, 30, 52, 0x000000, 0).setInteractive({ useHandCursor: true });
-    hit.on('pointerup', (p: Phaser.Input.Pointer) => p.getDistance() < 6 && this.onSelect(id));
+    hit.on('pointerup', (p: Phaser.Input.Pointer) => this.tapped(p) && this.onSelect(id));
     const root = this.add.container(pos.x, pos.y, [ring, shadow, figure, icon, hit]);
 
     const c: Char = {
@@ -539,6 +557,7 @@ export class OfficeScene extends Phaser.Scene {
       front,
       back,
       icon,
+      iconImage,
       label,
       ring,
       screen,
@@ -629,7 +648,9 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private refreshIcon(c: Char) {
-    c.icon.setText(c.pending ? '' : c.activity !== 'idle' ? ACTIVITY[c.activity].icon : c.atSpot && c.spot ? c.spot.icon : '');
+    const name: IconName | null = c.pending ? null : c.activity !== 'idle' ? ACTIVITY_ICON[c.activity] : c.atSpot && c.spot ? c.spot.icon : null;
+    c.icon.setVisible(!!name);
+    if (name) c.iconImage.setTexture(iconKey(name)).setDisplaySize(11, 11);
   }
 
   private setActivity(id: number, a: Activity) {
@@ -663,7 +684,7 @@ export class OfficeScene extends Phaser.Scene {
     const circle = this.add.circle(0, 0, 11, 0xdc2626).setStrokeStyle(2, 0xffffff);
     const mark = this.add.text(0, 0, '!', { fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: '#ffffff', resolution: 2 }).setOrigin(0.5);
     c.alert = this.add.container(c.root.x, c.root.y - 54, [circle, mark]).setDepth(OVERLAY_DEPTH + 1).setSize(24, 24).setInteractive({ useHandCursor: true });
-    c.alert.on('pointerup', () => this.onSelect(c.id));
+    c.alert.on('pointerup', (p: Phaser.Input.Pointer) => this.tapped(p) && this.onSelect(c.id));
     this.tweens.add({ targets: c.alert, scale: 1.2, duration: 450, yoyo: true, repeat: -1 });
   }
 
@@ -728,7 +749,7 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   // Vai até a mesa do colega e fala. O visitante fica à direita do colega.
-  private visit(fromId: number, toId: number, text: string, after?: number) {
+  private visit(fromId: number, toId: number, text: string, icon: IconName, after?: number) {
     const c = this.chars.get(fromId);
     const target = this.plan?.seats.get(toId);
     if (!c || !target) return;
@@ -743,7 +764,7 @@ export class OfficeScene extends Phaser.Scene {
       c.bubbleDx = 70;
       const host = this.chars.get(toId);
       if (host) host.bubbleDx = -70;
-      this.say(c, text, 'say', 7000);
+      this.say(c, text, 'say', 7000, icon);
       if (after) this.time.delayedCall(after, () => this.goHome(c));
     });
   }
@@ -752,12 +773,12 @@ export class OfficeScene extends Phaser.Scene {
     const asker = this.chars.get(toId);
     await asker?.arrival;
     const c = this.chars.get(fromId);
-    if (c) this.say(c, `💬 ${text}`, 'say', 6500);
+    if (c) this.say(c, text, 'say', 6500, 'message');
     this.time.delayedCall(2800, () => asker && this.goHome(asker));
     this.time.delayedCall(6500, () => c && (c.bubbleDx = 0));
   }
 
-  private say(c: Char, text: string, kind: 'say' | 'thought', ms: number) {
+  private say(c: Char, text: string, kind: 'say' | 'thought', ms: number, icon?: IconName) {
     c.bubbleTimer?.remove();
     c.bubble?.destroy();
     const thought = kind === 'thought';
@@ -771,8 +792,10 @@ export class OfficeScene extends Phaser.Scene {
         resolution: 2,
       })
       .setOrigin(0.5, 1);
-    const w = txt.width + 14;
+    const pad = icon ? 18 : 0; // espaço do ícone à esquerda do texto
+    const w = txt.width + 14 + pad;
     const h = txt.height + 10;
+    txt.setX(pad / 2);
     const g = this.add.graphics();
     g.fillStyle(thought ? 0xf1f5f9 : 0xffffff, 0.97);
     g.lineStyle(1, 0x94a3b8, 1);
@@ -784,7 +807,9 @@ export class OfficeScene extends Phaser.Scene {
     } else {
       g.fillTriangle(-6, -8, 6, -8, 0, 0);
     }
-    const bubble = this.add.container(c.root.x + c.bubbleDx, c.root.y - 54, [g, txt]).setDepth(OVERLAY_DEPTH + c.root.y / 1e4);
+    const parts: Phaser.GameObjects.GameObject[] = [g, txt];
+    if (icon) parts.push(this.add.image(-w / 2 + 13, -7 - h / 2, iconKey(icon)).setDisplaySize(12, 12).setTint(0x2563eb));
+    const bubble = this.add.container(c.root.x + c.bubbleDx, c.root.y - 54, parts).setDepth(OVERLAY_DEPTH + c.root.y / 1e4);
     c.bubble = bubble;
     c.bubbleTimer = this.time.delayedCall(ms, () => {
       if (c.bubble === bubble) c.bubble = undefined;
@@ -792,8 +817,8 @@ export class OfficeScene extends Phaser.Scene {
     });
   }
 
-  private float(c: Char, emoji: string) {
-    const t = this.add.text(c.root.x, c.root.y - 50, emoji, { fontSize: '20px', resolution: 2 }).setOrigin(0.5).setDepth(OVERLAY_DEPTH + 2);
+  private float(c: Char, icon: IconName, tint: number) {
+    const t = this.add.image(c.root.x, c.root.y - 50, iconKey(icon)).setDisplaySize(20, 20).setTint(tint).setDepth(OVERLAY_DEPTH + 2);
     this.transients.add(t);
     this.tweens.add({
       targets: t,
@@ -903,14 +928,14 @@ export class OfficeScene extends Phaser.Scene {
         if (c && d.kind === 'task') this.say(c, d.text, 'thought', 4500);
         break;
       case 'colleague.ask':
-        this.visit(e.employeeId!, d.toId, `❓ ${d.question}`);
+        this.visit(e.employeeId!, d.toId, d.question, 'question');
         break;
       case 'colleague.answer':
         this.answer(d.fromId, e.employeeId!, d.answer);
         if (replay) this.setActivity(d.fromId, 'idle');
         break;
       case 'task.delegated':
-        this.visit(e.employeeId!, d.toId, `📄 ${d.title}`, 2500);
+        this.visit(e.employeeId!, d.toId, d.title, 'file', 2500);
         break;
       case 'approval.requested':
         if (c && d.kind !== 'delegation') this.setPending(c, true);
@@ -921,15 +946,16 @@ export class OfficeScene extends Phaser.Scene {
         if (replay) this.setPile((this.replayPending = Math.max(0, this.replayPending - 1)));
         break;
       case 'task.created':
-        if (c) this.float(c, '📥');
+        if (c) this.float(c, 'inbox', 0x2563eb);
         break;
       case 'task.finished':
         if (!c) break;
-        this.float(c, d.status === 'done' ? '✅' : d.status === 'cancelled' ? '⛔' : '💥');
+        const [icon, tint] = FINISH[d.status as keyof typeof FINISH] ?? FINISH.failed;
+        this.float(c, icon, tint);
         if (replay) this.setActivity(c.id, 'idle');
         break;
       case 'boss.message':
-        if (c) this.say(c, `👔 ${d.text}`, 'say', 5000);
+        if (c) this.say(c, d.text, 'say', 5000, 'briefcase');
         break;
     }
   }
