@@ -128,8 +128,16 @@ if [ "$OS" = darwin ]; then
 </plist>
 PLIST
   chmod 600 "$PLIST"
-  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  DOMAIN="gui/$(id -u)"
+  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+  # bootout returns before launchd finishes tearing the job down; bootstrapping too early fails with
+  # "Input/output error". Wait for the old job to go away, then retry a few times.
+  for _ in $(seq 40); do launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break; sleep 0.25; done
+  for attempt in 1 2 3 4 5; do
+    launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null && break
+    [ "$attempt" = 5 ] && launchctl bootstrap "$DOMAIN" "$PLIST"
+    sleep 1
+  done
 else
   if ! systemctl --user show-environment >/dev/null 2>&1; then
     say "systemd --user is not available here. Start it with: MLO_HOME=$MLO_HOME $MLO_HOME/app/scripts/start.sh"
