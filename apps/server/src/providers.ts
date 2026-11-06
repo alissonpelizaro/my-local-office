@@ -14,7 +14,7 @@ const ANTHROPIC_VARS = [
   'CLAUDE_CODE_SUBAGENT_MODEL',
 ];
 
-// Mesmo esquema do local-llm-hub: todos os aliases (opus/sonnet/haiku/subagentes) viram o modelo do provedor.
+// Todos os aliases (opus/sonnet/haiku/subagentes) viram o modelo do provedor.
 // Token nunca vazio, senão o Claude Code mandaria o login da Anthropic para o provedor.
 function remoteEnv(p: Provider) {
   const viaBridge = p.format === 'openai';

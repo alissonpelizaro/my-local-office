@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
-export const DATA = process.env.OFFICE_DATA ?? path.resolve(import.meta.dirname, '../../../data');
+// Instalação pelo install.sh: o app é trocado a cada versão, os dados ficam ao lado ($MLO_HOME/data).
+export const DATA = process.env.OFFICE_DATA ?? (process.env.MLO_HOME ? path.join(process.env.MLO_HOME, 'data') : path.resolve(import.meta.dirname, '../../../data'));
 fs.mkdirSync(DATA, { recursive: true, mode: 0o700 });
 
 export const db = new DatabaseSync(path.join(DATA, 'office.db'));
@@ -119,6 +120,7 @@ addColumn('providers', 'context_window', 'INTEGER'); // tokens que o modelo ague
 addColumn('providers', 'max_parallel', 'INTEGER NOT NULL DEFAULT 1'); // tasks simultâneas do provedor (nativo = sem teto)
 addColumn('employees', 'connectors', 'INTEGER NOT NULL DEFAULT 0'); // carrega conectores claude.ai e MCPs do usuário/projeto nas tasks
 addColumn('tasks', 'precheck', 'TEXT'); // comando que decide se a task precisa do agente (vazio = nada a fazer)
+addColumn('employees', 'kind', `TEXT NOT NULL DEFAULT 'repo'`); // repo | intern (sem repositório, trabalha numa pasta própria)
 db.exec('CREATE INDEX IF NOT EXISTS tasks_thread ON tasks (thread_id)');
 
 // Tasks anteriores às conversas: continuação do mesmo funcionário herda a conversa da origem.
@@ -163,6 +165,7 @@ export type Employee = {
   profile_source: 'auto' | 'manual';
   profile_commit: string | null;
   connectors: number;
+  kind: 'repo' | 'intern';
 };
 export type TaskStatus = 'scheduled' | 'paused' | 'pending_approval' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type Task = {
@@ -205,5 +208,5 @@ export const get = <T>(sql: string, ...params: SQLInputValue[]) => db.prepare(sq
 export const run = (sql: string, ...params: SQLInputValue[]) => db.prepare(sql).run(...params);
 
 // Processos e esperas não sobrevivem a um restart: o que ficou pendurado é encerrado.
-run(`UPDATE tasks SET status = 'failed', result = 'Interrompida: servidor reiniciado', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ') WHERE status = 'running'`);
+run(`UPDATE tasks SET status = 'failed', result = 'Interrupted: the server restarted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ') WHERE status = 'running'`);
 run(`UPDATE approvals SET status = 'expired' WHERE status = 'pending' AND kind != 'delegation'`);

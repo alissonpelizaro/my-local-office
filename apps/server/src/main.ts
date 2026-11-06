@@ -14,8 +14,8 @@ import { startNotifications } from './notify.ts';
 import * as office from './office.ts';
 import { stopAll } from './runner.ts';
 import { settings, updateSettings } from './settings.ts';
+import { checkUpdate, startUpdate, updateInfo } from './update.ts';
 
-const CONSOLE = path.resolve(import.meta.dirname, '../public/index.html');
 const WEB = path.resolve(import.meta.dirname, '../../web/dist');
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -37,14 +37,14 @@ async function readJson(req: IncomingMessage, limit = 1e6) {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const c of req) {
-    if ((size += c.length) > limit) throw new office.HttpError(413, 'corpo muito grande');
+    if ((size += c.length) > limit) throw new office.HttpError(413, 'body too large');
     chunks.push(c);
   }
   if (!chunks.length) return {};
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
-    throw new office.HttpError(400, 'JSON inválido');
+    throw new office.HttpError(400, 'invalid JSON');
   }
 }
 
@@ -61,9 +61,12 @@ function streamEvents(req: IncomingMessage, res: ServerResponse, url: URL) {
   });
 }
 
-// Build do apps/web quando existe (SPA: rota desconhecida cai no index.html); sem build, o console F0.
+// Build do apps/web (SPA: rota desconhecida cai no index.html).
 function serveStatic(res: ServerResponse, pathname: string) {
-  if (!fs.existsSync(WEB)) return serveFile(res, CONSOLE);
+  if (!fs.existsSync(WEB)) {
+    res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' });
+    return res.end('Web UI not built yet: run `pnpm build` and reload.');
+  }
   const file = path.join(WEB, path.normalize(pathname).replace(/^(\.\.[/\\])+/, ''));
   const target = file.startsWith(WEB) && fs.statSync(file, { throwIfNoEntry: false })?.isFile() ? file : path.join(WEB, 'index.html');
   serveFile(res, target, target.includes(`${path.sep}assets${path.sep}`));
@@ -81,7 +84,7 @@ function serveFile(res: ServerResponse, file: string, immutable = false) {
 // Ponte para provedores OpenAI-compatíveis: o Claude Code fala Messages com /bridge/:id e a ponte traduz.
 async function bridge(req: IncomingMessage, res: ServerResponse, providerId: number, countOnly: boolean) {
   const p = get<Provider>('SELECT * FROM providers WHERE id = ?', providerId);
-  if (p?.format !== 'openai') return send(res, 404, { type: 'error', error: { type: 'not_found_error', message: 'provedor OpenAI não encontrado' } });
+  if (p?.format !== 'openai') return send(res, 404, { type: 'error', error: { type: 'not_found_error', message: 'OpenAI provider not found' } });
   const body = await readJson(req, 64e6);
   if (countOnly) return send(res, 200, countTokens(body));
   await proxyMessages(body, res, { baseUrl: p.base_url, apiKey: p.api_key });
@@ -89,11 +92,12 @@ async function bridge(req: IncomingMessage, res: ServerResponse, providerId: num
 
 type Handler = (body: any, params: string[], url: URL) => unknown;
 const routes: [string, RegExp, Handler][] = [
-  ['GET', /^\/api\/state$/, () => office.state()],
+  ['GET', /^\/api\/state$/, () => ({ ...office.state(), app: updateInfo() })],
   ['PATCH', /^\/api\/settings$/, (b) => updateSettings(b)],
   ['POST', /^\/api\/departments$/, (b) => office.createDepartment(b)],
   ['PATCH', /^\/api\/departments\/(\d+)$/, (b, [id]) => office.updateDepartment(Number(id), b)],
   ['DELETE', /^\/api\/departments\/(\d+)$/, (_, [id]) => office.deleteDepartment(Number(id))],
+  ['POST', /^\/api\/departments\/(\d+)\/model$/, (b, [id]) => office.setDepartmentModel(Number(id), b)],
   ['POST', /^\/api\/providers$/, (b) => office.saveProvider(b)],
   ['POST', /^\/api\/providers\/models$/, (b) => office.providerModels(b)],
   ['PATCH', /^\/api\/providers\/(\d+)$/, (b, [id]) => office.saveProvider({ ...b, id: Number(id) })],
@@ -121,6 +125,8 @@ const routes: [string, RegExp, Handler][] = [
   ['DELETE', /^\/api\/tasks\/(\d+)\/worktree$/, (_, [id]) => office.removeTaskWorktree(Number(id))],
   ['GET', /^\/api\/costs$/, (_, __, url) => office.costs(Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30)))],
   ['POST', /^\/api\/approvals\/(\d+)$/, (b, [id]) => office.resolveApproval(Number(id), b.decision, b.text, b.answers)],
+  ['POST', /^\/api\/update\/check$/, () => checkUpdate()],
+  ['POST', /^\/api\/update$/, () => startUpdate()],
 ];
 
 const server = http.createServer(async (req, res) => {
@@ -132,8 +138,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(302, { 'set-cookie': SESSION_COOKIE, location: url.pathname + url.search });
     return res.end();
   }
-  if (verdict === 'forbidden') return send(res, 403, { error: 'origem não permitida' });
-  if (verdict === 'unauthorized') return send(res, 401, { error: 'abra /?token=<OFFICE_TOKEN> uma vez neste dispositivo' });
+  if (verdict === 'forbidden') return send(res, 403, { error: 'origin not allowed' });
+  if (verdict === 'unauthorized') return send(res, 401, { error: 'open /?token=<OFFICE_TOKEN> once on this device' });
 
   const p = url.pathname;
   try {
@@ -146,17 +152,16 @@ const server = http.createServer(async (req, res) => {
       const m = req.method === method && p.match(re);
       if (m) return send(res, 200, await handler(method === 'GET' ? {} : await readJson(req), m.slice(1), url));
     }
-    if (p.startsWith('/api/')) return send(res, 404, { error: 'não encontrado' });
-    if (req.method === 'GET' && p === '/console') return serveFile(res, CONSOLE);
+    if (p.startsWith('/api/')) return send(res, 404, { error: 'not found' });
     if (req.method === 'GET') return serveStatic(res, p);
-    send(res, 404, { error: 'não encontrado' });
+    send(res, 404, { error: 'not found' });
   } catch (e: any) {
     if (!(e instanceof office.HttpError) && !e.status) console.error(e);
     if (!res.headersSent) send(res, e.status ?? 500, { error: e.message });
   }
 });
 
-server.listen(PORT, HOST, () => console.log(`my-local-office em http://${HOST}:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`my-local-office v${updateInfo().version} on http://${HOST}:${PORT}`));
 
 startNotifications();
 office.releaseScheduled();
@@ -166,6 +171,9 @@ setInterval(refreshModels, 86_400_000).unref();
 // Fichas desatualizadas: confere pouco depois de subir e uma vez por dia.
 setTimeout(office.refreshProfiles, 30_000).unref();
 setInterval(office.refreshProfiles, 86_400_000).unref();
+// Release nova no GitHub: pouco depois de subir e a cada 6 h.
+setTimeout(checkUpdate, 10_000).unref();
+setInterval(checkUpdate, 6 * 3_600_000).unref();
 
 // Processos `claude` filhos não sobrevivem ao server: sem o MCP dele, ficariam rodando às cegas.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

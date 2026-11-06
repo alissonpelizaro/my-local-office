@@ -51,7 +51,7 @@ function resolveAlias(alias: string) {
 // Chamada real e mínima: system prompt curto, sem tools, resposta de uma palavra.
 function check(id: string) {
   return new Promise<ModelInfo>((resolve) => {
-    const args = ['-p', 'Responda apenas: ok', '--model', id, '--system-prompt', 'Responda curto.', '--output-format', 'json', ...BASE_ARGS];
+    const args = ['-p', 'Reply only: ok', '--model', id, '--system-prompt', 'Reply briefly.', '--output-format', 'json', ...BASE_ARGS];
     execFile(CLAUDE_BIN, args, { cwd: DATA, env: childEnv(undefined), timeout: 60_000 }, (_err, stdout) => {
       try {
         const r = JSON.parse(stdout);
@@ -60,7 +60,7 @@ function check(id: string) {
         const requires = msg.match(/version ([\d.]+) or newer is required/)?.[1];
         resolve(requires ? { id, status: 'update', requires } : { id, status: 'unavailable', note: msg.slice(0, 200) });
       } catch {
-        resolve({ id, status: 'unavailable', note: stdout.slice(0, 200) || 'sem resposta do CLI' });
+        resolve({ id, status: 'unavailable', note: stdout.slice(0, 200) || 'no answer from the CLI' });
       }
     });
   });

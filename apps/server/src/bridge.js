@@ -1,4 +1,4 @@
-// Ponte Anthropic Messages ↔ OpenAI Chat Completions (portada de local-llm-hub/lib/bridge.js).
+// Ponte Anthropic Messages ↔ OpenAI Chat Completions (streaming e tools).
 import crypto from 'node:crypto';
 
 const STOP = { stop: 'end_turn', length: 'max_tokens', tool_calls: 'tool_use', function_call: 'tool_use' };
