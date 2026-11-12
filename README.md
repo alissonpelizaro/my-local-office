@@ -65,6 +65,8 @@ Set these before running the installer (they are written into the service):
 
 Network access example: `OFFICE_HOST=0.0.0.0 OFFICE_TOKEN=$(openssl rand -hex 16) bash install.sh`. Whoever has the token runs agents on your machine: trusted networks only.
 
+Tunnels (ngrok, cloudflared) pointing at `localhost:4410` follow the same rule: set `OFFICE_TOKEN` (keep `OFFICE_HOST` on loopback) and open `https://<tunnel>/?token=<token>` once. Without a token, only localhost is accepted.
+
 ## How it works
 
 - **Departments** group employees by project, product or area. Each one is a room in the office.
