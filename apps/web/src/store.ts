@@ -102,7 +102,7 @@ const EMPTY: OfficeState = {
     notifyApprovals: true,
     notifyTaskFinished: true,
     autoAllowReadOnly: true,
-    onlyAskExternal: false,
+    onlyAskExternal: true,
     profileRefreshCommits: 40,
   },
 };

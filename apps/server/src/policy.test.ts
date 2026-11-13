@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { allowedByRule, isExternal, isInside, isReadOnlyCommand, rulesFor } from './policy.ts';
+import { allowedByRule, isDestructive, isExternal, isInside, isReadOnlyCommand, rulesFor } from './policy.ts';
 
 test('isReadOnlyCommand: exploração local liberada', () => {
   const cwd = '/r/repo';
@@ -23,6 +23,20 @@ test('isReadOnlyCommand: exploração local liberada', () => {
     'cd apps/api && ls',
     'cd /r/repo/apps && cat package.json; echo rc=$?',
     'grep -v "renewal.spec\\|referrals.spec" log.txt',
+    // o que colegas consultados mais tentavam e era negado
+    'git -C /r/repo log --oneline -3; git --no-pager show HEAD --stat',
+    'git fetch -q origin 2>&1 | tail -1; git log --oneline origin/main -8',
+    'git fetch --tags origin',
+    "git branch -a --list '*68*'",
+    'git branch --contains 27f315a',
+    "git tag -l 'v1.6*'",
+    'git tag --sort=-v:refname --points-at HEAD',
+    'git merge-base HEAD origin/main; git rev-list --count v1.6.4..HEAD',
+    "sed -n '434,458p;582,600p' api/helper.py",
+    'git show origin/main:a.py | cat -n | sed -n 1,60p',
+    "git ls-tree -r --name-only v1 lib | sed 's#lib/##'",
+    'rtk proxy git log -3',
+    'echo "=== a"\ngit log -1\n\ngit status |\n  head -3',
   ]) {
     assert.equal(isReadOnlyCommand(cmd, cwd), true, cmd);
   }
@@ -73,9 +87,90 @@ test('isReadOnlyCommand: qualquer dúvida pede permissão', () => {
     'gh api graphql -F query=@q.graphql',
     'gh api repos/a/b --input body.json',
     'gh api repos/a/b --method=DELETE',
+    'git -C ~/x log',
+    'git -C /r/repo -c core.pager=sh log',
+    'git -c alias.x=!sh x',
+    'git fetch origin pull/1/head:pr1',
+    'git fetch --upload-pack=touch origin',
+    'git ls-remote --upload-pack=sh origin',
+    'git fetch -u origin',
+    'git fetch --depth=1 origin',
+    'git fetch --prune --prune-tags origin',
+    'git branch -D x',
+    'git branch -a nova',
+    'git tag -d v1',
+    'git tag -a v2 -m x',
+    "sed -n '1p;w out' f",
+    "sed 's/a/b/w out' f",
+    "sed 's/a/b/e' f",
+    "sed -n 1,5p /etc/passwd",
+    "sed -n -i 1p f",
+    'rtk proxy rm x',
   ]) {
     assert.equal(isReadOnlyCommand(cmd, cwd), false, cmd);
   }
+});
+
+test('isDestructive: descarta trabalho, mexe no sistema ou apaga fora da pasta', () => {
+  const cwd = '/r/repo';
+  for (const command of [
+    'git reset --hard origin/main',
+    'git clean -fd',
+    'git checkout -- .',
+    'cd /tmp/x && rtk git checkout master -- src/ && pytest',
+    'git checkout .',
+    'git restore src/a.ts',
+    'git stash drop',
+    'launchctl kickstart -k gui/501/local.my-local-office',
+    'systemctl --user stop x',
+    'pkill -f "pytest"',
+    'kill 123',
+    'sudo ls',
+    'psql "$DB" -c "DELETE FROM users WHERE id = 1"',
+    "sqlite3 data.db 'update tasks set status = 1'",
+    'find . -name "*.pyc" -delete',
+    'rm -rf src',
+    'rm -rf ~/x',
+    'rm -rf /tmp',
+    'rm -rf /tmp/*',
+    'rm -rf /tmp/../etc',
+    'rm -rf "$W"',
+    'cd sub && rm -rf build',
+    'cd ~ && rm x',
+    'cd && rm x',
+    'ls | xargs rm -f',
+    'rm /etc/hosts',
+    'rm ../outro/x',
+  ]) {
+    assert.equal(isDestructive('Bash', { command }, cwd), true, command);
+  }
+  for (const command of [
+    'pnpm test',
+    'uv run pytest -q',
+    'git checkout -b feat/x',
+    'git checkout main',
+    'git checkout pr-71 2>&1 | tail -2',
+    'git branch -d merged',
+    'git stash pop',
+    'git reset --soft HEAD~1',
+    'git commit -m "remove x" && git log -1',
+    'grep -rn "rm -rf" .',
+    'psql -c "SELECT * FROM users"',
+    'rm -rf /tmp/pr86 && git worktree add /tmp/pr86 pr-86',
+    'cd /tmp && rm -rf kb-pr194 && mkdir kb-pr194',
+    'cd /tmp/dta-events-pr65 && rm -rf .venv && uv venv .venv',
+    'rm -f /tmp/a.json /tmp/b.json; echo cleaned',
+    'rm -rf /var/folders/y4/1f9795/T/tmp.98rLUTOycB',
+    'rm src/old.ts',
+    'git rm src/old.ts',
+    'git branch -D pr-86',
+    'launchctl list | grep office; systemctl --user status x',
+    'set -e\nM=/tmp/seo-mine; rm -rf $M; mkdir -p $M/blog',
+    'W=/tmp/w; cd "$W"; rm -rf w164 w165',
+  ]) {
+    assert.equal(isDestructive('Bash', { command }, cwd), false, command);
+  }
+  assert.equal(isDestructive('Write', { file_path: '/etc/x' }, cwd), false);
 });
 
 test('isExternal: ações que saem da máquina', () => {

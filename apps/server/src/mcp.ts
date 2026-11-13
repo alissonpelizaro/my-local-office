@@ -14,7 +14,7 @@ const TOOLS = [
   {
     name: 'ask_colleague',
     description:
-      'Asks the employee responsible for another repository something and waits for the answer. They only read their own code (read-only tools, git and gh): nothing is changed. Use it instead of reading other repositories directly; for any action in their repository (change code, review or approve a PR, run a command), use delegate_task.',
+      'Asks the employee responsible for another repository something and waits for the answer, which can take several minutes: put everything you need in one self-contained question. They only read their own code (read-only tools, git and gh): nothing is changed. Use it instead of reading other repositories directly; for any action in their repository (change code, review or approve a PR, run a command), use delegate_task.',
     inputSchema: {
       type: 'object',
       properties: { to: str('Employee name (see directory)'), question: str('Self-contained question, with the context needed') },
