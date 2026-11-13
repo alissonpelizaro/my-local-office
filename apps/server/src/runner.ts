@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { type Activity, publish, setActivity } from './bus.ts';
-import { CLAUDE_BIN, PORT } from './config.ts';
+import { CLAUDE_BIN, OFFICE_TOOL_TIMEOUT_MS, PORT } from './config.ts';
 import { type Employee, get, type Provider, run } from './db.ts';
 import { childEnv } from './providers.ts';
 import { settings } from './settings.ts';
@@ -87,7 +87,10 @@ export function startRun(o: StartRun): Run {
   const effort = o.effort ?? o.employee.effort ?? s.defaultEffort;
   // O Claude Code compacta ao chegar perto da janela; sem isso, modelos de 1M deixam a sessão crescer (e cada chamada relê tudo).
   const windows = [s.compactWindow, provider?.context_window ?? 0].filter((n) => n > 0);
-  const mcp = { mcpServers: { office: { type: 'http', url: `http://127.0.0.1:${PORT}/mcp`, headers: { Authorization: `Bearer ${token}` } } } };
+  // O Claude Code desiste de tool MCP HTTP que passa 5 min sem responder; consulta a colega e resposta do chefe
+  // (aprovação, ask_boss) demoram mais que isso. O `timeout` do servidor estende essa espera.
+  const office = { type: 'http', url: `http://127.0.0.1:${PORT}/mcp`, headers: { Authorization: `Bearer ${token}` }, timeout: OFFICE_TOOL_TIMEOUT_MS };
+  const mcp = { mcpServers: { office } };
   const args = [
     '-p',
     '--input-format', 'stream-json',
