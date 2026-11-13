@@ -22,48 +22,47 @@ macOS and Linux, Intel and ARM. You only need [Claude Code](https://docs.claude.
 curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/install.sh | bash
 ```
 
-Then open **http://127.0.0.1:4410**. A setup assistant walks you through the language, your departments and your first hires.
+It installs the **My Local Office** app and opens it: in `/Applications` on macOS (`~/Applications` if that is not writable), and on Linux as an AppImage in `~/.local/bin/my-local-office` with an entry in the app menu. A setup assistant walks you through the language, your departments and your first hires.
 
-The installer puts the app in `~/.my-local-office/app`, your data in `~/.my-local-office/data` and registers a background service (a LaunchAgent on macOS, a `systemd --user` unit on Linux) that starts on login and restarts if it crashes. Logs: `~/.my-local-office/data/office.log`.
+The app runs the office while it is open: on macOS closing the window keeps it running (reopen it from the Dock, quit with ⌘Q); on Linux closing the window quits it. Quitting stops running tasks. Your data lives in `~/.my-local-office/data`, logs in `~/.my-local-office/data/office.log`. The UI is also at **http://127.0.0.1:4410** in any browser while the app is open.
+
+Prefer a manual download? The release has a `.dmg` (macOS) and an `.AppImage`/`.deb` (Linux). The app is not notarized by Apple: if macOS refuses to open a `.dmg` copy, allow it in **System Settings → Privacy & Security → Open Anyway** (the install command does not need this). Some Linux distributions need `libfuse2` for AppImages.
 
 | Option | |
 |---|---|
 | `--version v1.2.0` | Install a specific release |
-| `--file my-local-office-<os>-<arch>.tar.gz` | Install a package you already downloaded |
-| `--no-service` | Skip the service; start it yourself with `~/.my-local-office/app/scripts/start.sh` |
+| `--file <package>` | Install a package you already downloaded (`.app.tar.gz`, `.AppImage` or the server `.tar.gz`) |
+| `--server` | Headless background service instead of the app (servers, machines without a desktop; the default on Linux without a display) |
+| `--no-start` | Do not open the app / start the service |
 
-On Linux, run `loginctl enable-linger $USER` if the office should keep running without an open session.
+### Headless server
+
+`install.sh --server` puts the server in `~/.my-local-office/app` and registers a background service (a LaunchAgent on macOS, a `systemd --user` unit on Linux) that starts on login and restarts if it crashes; open **http://127.0.0.1:4410**. Without the service (`--no-start`), start it with `~/.my-local-office/app/scripts/start.sh`. On Linux, run `loginctl enable-linger $USER` if the office should keep running without an open session.
 
 ### Updates
 
-The office checks GitHub for a new release every few hours. When there is one, a badge shows up in the header and **Settings → About → Update now** downloads it, swaps the app folder (your data stays) and restarts the service. Running tasks are interrupted.
-
-You can also update from the terminal by running the install command again. If macOS blocks the downloaded files (quarantine), the same script clears it:
-
-```bash
-curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/install.sh | bash
-```
+The office checks GitHub for a new release every few hours. When there is one, a badge shows up in the header and **Settings → About → Update now** downloads it, replaces the app (or the server folder) and opens it again; your data stays. Running tasks are interrupted. You can also update by running the install command again.
 
 ### Uninstall
 
 ```bash
-~/.my-local-office/app/scripts/uninstall.sh          # keeps ~/.my-local-office/data
-~/.my-local-office/app/scripts/uninstall.sh --purge  # removes everything
+curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/uninstall.sh | bash               # keeps ~/.my-local-office/data
+curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/uninstall.sh | bash -s -- --purge  # removes everything
 ```
 
 ### Configuration
 
-Set these before running the installer (they are written into the service):
+The app reads these from your login shell (`export` them in `~/.zshrc`, `~/.bashrc`…), along with the `PATH` where it finds `claude`, `git` and `gh`. The headless server takes them when you run the installer (they are written into the service).
 
 | Variable | Default | |
 |---|---|---|
 | `OFFICE_PORT` | `4410` | |
 | `OFFICE_HOST` | `127.0.0.1` | `0.0.0.0` opens it to your network and requires `OFFICE_TOKEN` |
 | `OFFICE_TOKEN` | | 16+ characters. On another device, open `http://<ip>:4410/?token=<token>` once (it becomes a cookie). Localhost never asks |
-| `MLO_HOME` | `~/.my-local-office` | Install folder |
+| `MLO_HOME` | `~/.my-local-office` | Data folder (and the headless install) |
 | `OFFICE_CLAUDE_BIN` | `claude` | |
 
-Network access example: `OFFICE_HOST=0.0.0.0 OFFICE_TOKEN=$(openssl rand -hex 16) bash install.sh`. Whoever has the token runs agents on your machine: trusted networks only.
+Network access example: `OFFICE_HOST=0.0.0.0 OFFICE_TOKEN=$(openssl rand -hex 16)`. Whoever has the token runs agents on your machine: trusted networks only.
 
 Tunnels (ngrok, cloudflared) pointing at `localhost:4410` follow the same rule: set `OFFICE_TOKEN` (keep `OFFICE_HOST` on loopback) and open `https://<tunnel>/?token=<token>` once. Without a token, only localhost is accepted.
 
@@ -102,12 +101,15 @@ pnpm typecheck
 
 `pnpm install-service` registers a LaunchAgent that runs the source checkout (macOS); `pnpm uninstall-service` removes it.
 
+The desktop app (`apps/desktop`, [Tauri](https://tauri.app)) also needs Rust (see `.tool-versions`) and, on Linux, the [Tauri prerequisites](https://tauri.app/start/prerequisites/). It wraps the same server: `pnpm desktop build` stages `apps/desktop/src-tauri/app` (server, built UI and Node) and builds the app for this machine; `pnpm desktop dev` runs it unbundled. When something already answers on the port (`pnpm start`, the service above), the app just opens a window on it.
+
 | Folder | |
 |---|---|
 | `apps/server/src` | `runner.ts` (Claude Code CLI), `mcp.ts`, `office.ts` (tasks, approvals, consultations), `policy.ts`, `update.ts`, `bridge.js` |
 | `apps/web/src` | `store.ts` (state, SSE, replay), `components/`, `office/` (isometric floor plan and Phaser scene), `i18n/` |
-| `scripts` | `install.sh`, `uninstall.sh`, `start.sh`, `build-release.sh` |
+| `apps/desktop` | Tauri app: `src-tauri/src/main.rs` starts the bundled server and opens the window; `loading/` is shown while it starts |
+| `scripts` | `install.sh`, `uninstall.sh`, `start.sh`, `stage-app.sh`, `build-release.sh` |
 
 ### Releases
 
-PR titles follow [Conventional Commits](https://www.conventionalcommits.org). Release Drafter labels each PR and keeps a draft of the next version (`feat` → minor, `fix`/`chore`/`docs` → patch, `!` → major). Publishing the draft triggers the release workflow, which builds one package per platform with Node bundled, attaches them and `install.sh` to the release and checks that the package installs and starts on macOS and Linux.
+PR titles follow [Conventional Commits](https://www.conventionalcommits.org). Release Drafter labels each PR and keeps a draft of the next version (`feat` → minor, `fix`/`chore`/`docs` → patch, `!` → major). Publishing the draft triggers the release workflow, which builds the desktop app per platform (`.app.tar.gz`/`.dmg`, `.AppImage`/`.deb`) and the headless packages, all with Node bundled, attaches them, `install.sh` and `uninstall.sh` to the release and checks that the release installs and starts on macOS (app) and Linux (headless).

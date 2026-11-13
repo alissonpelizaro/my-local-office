@@ -38,4 +38,6 @@ template: |
   curl -fsSL https://github.com/$OWNER/$REPOSITORY/releases/download/v$RESOLVED_VERSION/install.sh | bash
   ```
 
+  It installs the **My Local Office** app (macOS: Applications folder; Linux: AppImage with a menu entry). The `.dmg`, `.AppImage` and `.deb` below are the same app for a manual install; the `.tar.gz` packages are the headless server (`install.sh --server`).
+
   Already installed? Open **Settings → About → Update now**, or run the command again.

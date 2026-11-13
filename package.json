@@ -16,7 +16,8 @@
     "build": "pnpm --filter web build",
     "test": "pnpm --filter server test",
     "install-service": "bash scripts/install-service.sh",
-    "uninstall-service": "bash scripts/uninstall-service.sh"
+    "uninstall-service": "bash scripts/uninstall-service.sh",
+    "desktop": "pnpm build && bash scripts/stage-app.sh apps/desktop/src-tauri/app 0.0.0-dev && pnpm --filter desktop tauri"
   },
   "engines": {
     "node": ">=22.18"

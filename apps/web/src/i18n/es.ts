@@ -522,7 +522,7 @@ export const es: Dict = {
     update: 'Actualizar ahora',
     updateQ: '¿Actualizar y reiniciar?',
     updateHint: 'Descarga la nueva versión, reemplaza la app y reinicia la oficina. Las tareas en ejecución se interrumpen.',
-    fromSource: 'Ejecutando desde el código fuente: actualiza con git pull, pnpm install y pnpm build.',
+    fromSource: 'Esta copia no se actualiza sola: descarga la nueva versión desde las notas de la versión (desde el código fuente: git pull, pnpm install y pnpm build).',
     notes: 'Notas de la versión',
     error: (e) => `La actualización falló: ${e}`,
     repo: 'Código fuente e issues',

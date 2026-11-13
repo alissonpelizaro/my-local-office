@@ -523,7 +523,7 @@ export const en = {
     update: 'Update now',
     updateQ: 'Update and restart?',
     updateHint: 'Downloads the new version, replaces the app and restarts the office. Running tasks are interrupted.',
-    fromSource: 'Running from a source checkout: update with git pull, pnpm install and pnpm build.',
+    fromSource: 'This copy does not update itself: download the new version from the release notes (from source: git pull, pnpm install and pnpm build).',
     notes: 'Release notes',
     error: (e: string) => `Update failed: ${e}`,
     repo: 'Source code and issues',
