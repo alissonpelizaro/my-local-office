@@ -131,6 +131,7 @@ function ToolCard({ id, who, payload: p, onOpen }: { id: number; who: string; pa
       extra={
         <>
           {p.external && <Chip tone="red">{t.approval.leavesMachine}</Chip>}
+          {p.destructive && <Chip tone="red">{t.approval.destructive}</Chip>}
           {p.outsideRepo && <Chip tone="amber">{t.approval.outsideRepo}</Chip>}
         </>
       }

@@ -78,7 +78,7 @@ Tunnels (ngrok, cloudflared) pointing at `localhost:4410` follow the same rule: 
   - `delegate_task`: a task for another employee (needs your approval by default)
   - `ask_boss`: a question for you
   - `approve`: the permission prompt
-- **Permissions**: whatever your settings do not already allow becomes a request in the UI (and a "!" over the employee). External actions (`git push`, opening/merging PRs, publish, docker, sending messages…) always ask. Read-only shell commands can run without asking.
+- **Permissions**: by default agents run read and local commands (tests, builds, local git…) and edit their workspace without asking. External actions (`git push`, opening/merging PRs, publish, docker, sending messages…) always ask, and so do destructive ones (`git reset --hard`, `rm -r` outside temp folders, `kill`, SQL writes…) and edits outside the workspace, unless you "always allow" them for that employee. Requests show up in the UI (and as a "!" over the employee). Settings → Execution can make it ask for every non-read command instead.
 - **Providers**: each employee (or a whole department, in one click) uses the Claude subscription or a remote provider. Anthropic-compatible providers are called directly; OpenAI-compatible ones go through a built-in bridge. A local Ollama works too (set its context to ~64K).
 - **Conversations**: click an employee to chat. Each message continues the same Claude session; while a turn is running, your message goes in right away. Sessions you opened outside the office (terminal, IDE) can be continued as a copy.
 - **Tasks** run now, at a set time or on repeat (e.g. every 15 min). A repeating task can have a pre-check command: no output means nothing to do and no tokens spent.

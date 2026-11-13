@@ -6,7 +6,7 @@ import { CONSULT_TIMEOUT_MS, MAX_CONSULT_DEPTH, PRECHECK_TIMEOUT_MS } from './co
 import { all, type Approval, DATA, type Department, type Employee, get, type Provider, run, type Task } from './db.ts';
 import { git } from './git.ts';
 import { LANGUAGE_NAME, msg } from './i18n.ts';
-import { allowedByRule, EDIT_TOOLS, isExternal, isInside, isReadOnlyCommand, rulesFor } from './policy.ts';
+import { allowedByRule, EDIT_TOOLS, isDestructive, isExternal, isInside, isReadOnlyCommand, rulesFor } from './policy.ts';
 import { providerFull, publicProvider } from './providers.ts';
 import { EFFORTS, type Run, type RunContext, runByToken, startRun, summarize } from './runner.ts';
 import { nextRun } from './schedule.ts';
@@ -412,21 +412,26 @@ function toolDetail(name: string, input: any) {
   return undefined;
 }
 
+// Quem é consultado não tem quem aprove: a negação explica o que roda, para o colega reformular em vez de desistir.
+const READ_ONLY_RUN =
+  'Denied: this run is read-only. Bash only runs read commands, chained with | && ; or one per line: git log/show/diff/grep/branch/tag, git fetch (no local refspecs; then read origin/<branch>), gh pr/issue view/list/diff, grep, sed -n, cat… Variables, $(…), redirects to files and paths outside your folder are not allowed.';
+
 export async function approveTool(ctx: RunContext, name: string, input: any) {
   if (ctx.kind !== 'task') {
     // Ninguém aprova fora de task: comando só leitura passa, independente do autoAllowReadOnly.
-    return name === 'Bash' && isReadOnlyCommand(input?.command, ctx.cwd) ? allow(input) : deny('This run is read-only.');
+    return name === 'Bash' && isReadOnlyCommand(input?.command, ctx.cwd) ? allow(input) : deny(name === 'Bash' ? READ_ONLY_RUN : 'This run is read-only.');
   }
   if (name === 'AskUserQuestion') return askUserQuestion(ctx, input);
   const e = employee(ctx.employee.id) ?? ctx.employee;
   const external = isExternal(name, input);
+  const destructive = isDestructive(name, input, ctx.cwd);
   const file = input?.file_path ?? input?.notebook_path;
   const inRepo = typeof file === 'string' && isInside(ctx.cwd, file);
   const outsideRepo = EDIT_TOOLS.has(name) && !inRepo;
   const rules: string[] = JSON.parse(e.allow_rules);
   if (name === 'Bash' && settings().autoAllowReadOnly && isReadOnlyCommand(input?.command, ctx.cwd)) return allow(input);
-  // ponytail: "externo" é lista de padrões (push, PR, publish, docker, gh api de escrita, MCP de envio); rm/curl locais passam.
-  if (!external && !outsideRepo && settings().onlyAskExternal) return allow(input);
+  // ponytail: externo e destrutivo são listas de padrões (push, PR, publish, docker…; reset --hard, rm -r fora de /tmp, kill, SQL de escrita…).
+  if (!external && !destructive && !outsideRepo && settings().onlyAskExternal) return allow(input);
   if (!external && allowedByRule(rules, name, input, ctx.cwd)) return allow(input);
   if (!external && EDIT_TOOLS.has(name) && inRepo && e.auto_edit) return allow(input);
 
@@ -436,6 +441,7 @@ export async function approveTool(ctx: RunContext, name: string, input: any) {
     summary: summarize(input),
     detail: toolDetail(name, input),
     external,
+    destructive,
     outsideRepo,
     rules: rulesFor(rules, name, input, ctx.cwd),
   });
@@ -498,8 +504,10 @@ export async function askColleague(ctx: RunContext, to: string, question: string
       agentsMd(target.repo_path),
       target.kind === 'intern'
         ? `Your colleague "${ctx.employee.name}" is consulting you. Answer objectively, based on what you know and the files in your workspace.`
-        : `Your colleague "${ctx.employee.name}" is consulting you. Answer objectively and verifiably, based on this repository's code (cite files).`,
+        : `Your colleague "${ctx.employee.name}" is consulting you. Start with the direct answer, then the evidence from this repository's code (cite files).`,
       'Read-only consultation: do not change anything. Bash only runs read commands (git log/diff/show, gh pr view…); everything else is denied.',
+      target.kind !== 'intern' && 'Your local copy may be behind: when the question is about main or a PR, run `git fetch` and read origin/<branch> or `gh pr diff`.',
+      `${ctx.employee.name} is waiting for your answer: investigate only what is needed to answer.`,
       'If the question is about another repository, say who to ask (see the directory tool).',
       `Reply in the language of the question; if unsure, in ${LANGUAGE_NAME[settings().language]}.`,
     ]
