@@ -1,6 +1,6 @@
 // Versão instalada, checagem de release nova no GitHub e atualização com um clique.
 // A atualização roda o install.sh da própria versão (copiado para fora da pasta que ele substitui), desacoplado do
-// server: ele baixa o pacote, troca a pasta do app, tira a quarentena do macOS e reinicia o serviço.
+// server: ele baixa o pacote, troca o app (ou a pasta do serviço headless), tira a quarentena do macOS e o reabre/reinicia.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,7 +21,7 @@ export type UpdateInfo = {
   latest: string | null;
   releaseUrl: string | null;
   checkedAt: string | null;
-  canUpdate: boolean; // instalado pelo install.sh (MLO_HOME) em macOS/Linux
+  canUpdate: boolean; // instalado pelo install.sh (MLO_HOME): app .app/AppImage ou serviço headless
   updating: boolean;
   error: string | null;
 };
@@ -88,7 +88,7 @@ export async function startUpdate() {
   const log = fs.openSync(path.join(DATA, 'update.log'), 'a');
   const args = [script, '--version', `v${info.latest}`];
   // systemd mata o cgroup inteiro do serviço ao reiniciar: o script sai dele com systemd-run.
-  const viaSystemd = process.platform === 'linux' && !!process.env.INVOCATION_ID;
+  const viaSystemd = process.platform === 'linux' && !!process.env.INVOCATION_ID && !process.env.MLO_APP;
   const [cmd, argv] = viaSystemd ? ['systemd-run', ['--user', '--collect', '--quiet', `--setenv=MLO_HOME=${process.env.MLO_HOME}`, ...passEnv(), 'bash', ...args]] : ['bash', args];
   // detached: sessão própria, o launchd não leva o script junto quando derruba o server.
   const child = spawn(cmd, argv, { detached: true, stdio: ['ignore', log, log], env: process.env });
@@ -110,4 +110,4 @@ export async function startUpdate() {
 
 // Variáveis do serviço que o install.sh regrava no plist/unit (porta, host, token, label).
 const passEnv = () =>
-  ['OFFICE_PORT', 'OFFICE_HOST', 'OFFICE_TOKEN', 'MLO_LABEL', 'GITHUB_TOKEN', 'PATH'].flatMap((k) => (process.env[k] ? [`--setenv=${k}=${process.env[k]}`] : []));
+  ['OFFICE_PORT', 'OFFICE_HOST', 'OFFICE_TOKEN', 'MLO_LABEL', 'MLO_MODE', 'GITHUB_TOKEN', 'PATH'].flatMap((k) => (process.env[k] ? [`--setenv=${k}=${process.env[k]}`] : []));

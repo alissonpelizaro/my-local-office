@@ -176,10 +176,11 @@ setTimeout(checkUpdate, 10_000).unref();
 setInterval(checkUpdate, 6 * 3_600_000).unref();
 
 // Processos `claude` filhos não sobrevivem ao server: sem o MCP dele, ficariam rodando às cegas.
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    stopAll();
-    server.close();
-    setTimeout(() => process.exit(0), 500).unref();
-  });
-}
+const shutdown = () => {
+  stopAll();
+  server.close();
+  setTimeout(() => process.exit(0), 500).unref();
+};
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, shutdown);
+// No app desktop o stdin é um pipe do app: EOF = app fechado (ou morto), o server vai junto.
+if (process.env.MLO_APP) process.stdin.on('end', shutdown).resume();

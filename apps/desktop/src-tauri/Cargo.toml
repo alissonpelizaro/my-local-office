@@ -1,0 +1,16 @@
+[package]
+name = "my-local-office"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+tauri-plugin-single-instance = "2.5"
+
+[profile.release]
+lto = true
+strip = true
