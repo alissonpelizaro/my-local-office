@@ -330,7 +330,7 @@ export function ChatView({ employee }: { employee: Employee }) {
           ))}
           {optimistic && (
             <div className="ml-10 animate-rise justify-self-end opacity-70">
-              <div className="rounded-2xl rounded-br-md bg-blue-600 px-3.5 py-2 text-sm whitespace-pre-wrap text-white [overflow-wrap:anywhere]">{optimistic}</div>
+              <div className="rounded-2xl rounded-br-md bg-blue-600 px-3.5 py-2 text-sm whitespace-pre-wrap text-white [overflow-wrap:anywhere]"><UserText text={optimistic} /></div>
             </div>
           )}
           {status && (
@@ -376,7 +376,7 @@ function RowView({ row: r }: { row: Row }) {
             {r.note && ` · ${r.note}`}
           </div>
           <div className="rounded-2xl rounded-br-md bg-gradient-to-br from-blue-500 to-blue-600 px-3.5 py-2 text-sm whitespace-pre-wrap text-white shadow-sm shadow-blue-600/20 [overflow-wrap:anywhere]">
-            {r.text}
+            <UserText text={r.text} />
           </div>
         </div>
       );
@@ -497,6 +497,42 @@ function RowView({ row: r }: { row: Row }) {
 // Rascunho por funcionário: trocar de aba ou de pessoa não perde o que estava escrito.
 const drafts = new Map<number, string>();
 
+// Anexo viaja no texto como uma linha `📎 <caminho>`: o funcionário lê o arquivo com Read e a conversa mostra a miniatura.
+const ATTACHMENT = /^📎 (\/\S+)$/;
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
+const fileName = (file: string) => file.split('/').pop()!.replace(/^[a-z0-9]+-/, '');
+
+function Attachment({ file }: { file: string }) {
+  const src = `/api/uploads/${file.split('/').pop()}`;
+  return IMAGE.test(file) ? (
+    <a href={src} target="_blank" rel="noreferrer" title={fileName(file)}>
+      <img src={src} alt={fileName(file)} className="max-h-40 max-w-full rounded-lg object-contain" />
+    </a>
+  ) : (
+    <a href={src} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-xs [overflow-wrap:anywhere]">
+      <Icon name="paperclip" className="h-3.5 w-3.5 shrink-0" /> {fileName(file)}
+    </a>
+  );
+}
+
+function UserText({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const files = lines.flatMap((l) => l.match(ATTACHMENT)?.[1] ?? []);
+  const rest = lines.filter((l) => !ATTACHMENT.test(l)).join('\n').trim();
+  return (
+    <>
+      {rest}
+      {files.length > 0 && (
+        <div className={cx('flex flex-wrap gap-1.5', rest && 'mt-2')}>
+          {files.map((f) => (
+            <Attachment key={f} file={f} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Composer(p: { draftKey: number; busy: boolean; disabled: boolean; placeholder: string; onSend: (text: string) => Promise<boolean>; onStop?: () => void }) {
   const t = useT();
   const [text, setTextState] = useState(() => drafts.get(p.draftKey) ?? '');
@@ -504,21 +540,70 @@ function Composer(p: { draftKey: number; busy: boolean; disabled: boolean; place
     drafts.set(p.draftKey, v);
     setTextState(v);
   };
+  const [files, setFiles] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const picker = useRef<HTMLInputElement>(null);
+  const attach = async (list: FileList | File[]) => {
+    for (const f of list) {
+      setUploading((n) => n + 1);
+      const r = await act(async () => {
+        const res = await fetch(`/api/uploads?name=${encodeURIComponent(f.name || 'pasted.png')}`, { method: 'POST', body: f });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error ?? res.statusText);
+        return data as { path: string };
+      });
+      if (r) setFiles((x) => [...x, r.path]);
+      setUploading((n) => n - 1);
+    }
+  };
   const [sending, setSending] = useState(false);
+  const ready = (text.trim() || files.length) && !uploading && !p.disabled;
   const submit = async () => {
-    if (!text.trim() || sending || p.disabled) return;
+    if (!ready || sending) return;
     setSending(true);
-    if (await p.onSend(text)) setText('');
+    const message = [text.trim(), ...files.map((f) => `📎 ${f}`)].filter(Boolean).join('\n');
+    if (await p.onSend(message)) {
+      setText('');
+      setFiles([]);
+    }
     setSending(false);
   };
   return (
     <div className="border-t border-zinc-200 pt-3 dark:border-zinc-800">
-      <div className="rounded-xl border border-zinc-200 bg-white shadow-xs transition focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/15 dark:border-zinc-700/80 dark:bg-zinc-900">
+      <div
+        onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          attach(e.dataTransfer.files);
+        }}
+        className="rounded-xl border border-zinc-200 bg-white shadow-xs transition focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/15 dark:border-zinc-700/80 dark:bg-zinc-900"
+      >
+        {(files.length > 0 || uploading > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5">
+            {files.map((f) => (
+              <span key={f} className="group relative inline-flex items-center gap-1.5 rounded-lg bg-zinc-100 p-1 pr-2 text-xs dark:bg-zinc-800">
+                {IMAGE.test(f) ? <img src={`/api/uploads/${f.split('/').pop()}`} alt="" className="h-8 w-8 rounded object-cover" /> : <Icon name="paperclip" className="ml-1 h-3.5 w-3.5" />}
+                <span className="max-w-32 truncate">{fileName(f)}</span>
+                <button type="button" onClick={() => setFiles((x) => x.filter((y) => y !== f))} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">
+                  <Icon name="x" className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {uploading > 0 && <Spinner className="h-4 w-4 text-zinc-400" />}
+          </div>
+        )}
         <textarea
           rows={Math.min(6, Math.max(1, text.split('\n').length))}
           value={text}
           disabled={p.disabled}
           onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => {
+            // Print ou arquivo copiado no Finder chegam como File; texto segue o caminho normal.
+            if (!e.clipboardData.files.length) return;
+            e.preventDefault();
+            attach(e.clipboardData.files);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -529,7 +614,18 @@ function Composer(p: { draftKey: number; busy: boolean; disabled: boolean; place
           className="max-h-40 w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-zinc-400"
         />
         <div className="flex items-center gap-2 px-2 pb-2">
-          <span className="flex-1 pl-1 text-[11px] text-zinc-400">
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files) attach([...e.target.files]);
+              e.target.value = '';
+            }}
+          />
+          <Button variant="ghost" size="icon" icon="paperclip" title={t.chat.attach} disabled={p.disabled} onClick={() => picker.current?.click()} />
+          <span className="flex-1 text-[11px] text-zinc-400">
             <Rich text={t.chat.keys} />
           </span>
           {p.onStop && (
@@ -537,7 +633,7 @@ function Composer(p: { draftKey: number; busy: boolean; disabled: boolean; place
               {t.chat.stop}
             </Button>
           )}
-          <Button variant="primary" size="sm" icon={p.busy ? 'zap' : 'arrowUp'} busy={sending} disabled={!text.trim() || p.disabled} onClick={submit}>
+          <Button variant="primary" size="sm" icon={p.busy ? 'zap' : 'arrowUp'} busy={sending} disabled={!ready} onClick={submit}>
             {p.busy ? t.chat.sendNow : t.common.send}
           </Button>
         </div>

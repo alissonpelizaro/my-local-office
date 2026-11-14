@@ -7,7 +7,7 @@ import { testWebAlert, webAlerts } from '../alerts';
 import { EffortSelect, ModelSelect, ModelsStatus, ProviderSelect } from './EmployeeSettings';
 import { EmployeeSettings } from './EmployeeSettings';
 import { Icon, type IconName } from './icons';
-import { Avatar, Button, Card, Chip, ConfirmButton, cx, Empty, Field, Input, Saved, Segmented, Select, SettingRow, Skeleton, Stepper, Switch } from './ui';
+import { Avatar, Button, Card, Chip, ConfirmButton, cx, Empty, Field, Input, Saved, Segmented, Select, SettingRow, Skeleton, Spinner, Stepper, Switch } from './ui';
 
 const SECTIONS: { value: ConfigSection; icon: IconName }[] = [
   { value: 'team', icon: 'users' },
@@ -664,7 +664,6 @@ function AccessSection() {
   const t = useT();
   const sys = useSystem();
   if (!sys) return <Skeleton className="h-40" />;
-  const env = ['export OFFICE_HOST=0.0.0.0', 'export OFFICE_TOKEN=$(openssl rand -hex 16)'];
   return (
     <>
       <Card title={t.access.title} description={t.access.description}>
@@ -698,30 +697,15 @@ function AccessSection() {
           ) : (
             <div className="grid gap-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
               <p>{t.access.lanOff}</p>
-              {env.map((l) => (
-                <CopyLine key={l} text={l} />
-              ))}
+              <CopyLine text="export OFFICE_HOST=0.0.0.0" />
               <p>{t.access.restart}</p>
             </div>
           )}
         </div>
       </Card>
 
-      <Card title={t.access.tunnel} description={t.access.tunnelText}>
-        <div className="grid gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-          <CopyLine text={`ngrok http ${sys.port}`} />
-          <CopyLine text={`cloudflared tunnel --url http://localhost:${sys.port}`} />
-          {sys.tokenSet ? (
-            <p>{t.access.tunnelToken}</p>
-          ) : (
-            <>
-              <p className="text-amber-700 dark:text-amber-300">{t.access.tunnelNoToken}</p>
-              <CopyLine text={env[1]} />
-              <p>{t.access.restart}</p>
-            </>
-          )}
-        </div>
-      </Card>
+      <TunnelCard port={sys.port} />
+      <TokensCard bases={sys.lan ? sys.network : []} />
 
       {sys.app && (
         <Card title={t.access.appTitle} description={t.access.appText}>
@@ -731,6 +715,125 @@ function AccessSection() {
         </Card>
       )}
     </>
+  );
+}
+
+// O escritório abre o túnel (ngrok ou cloudflared) e mostra o endereço público; quem entra por ele precisa de um token.
+function TunnelCard({ port }: { port: number }) {
+  const t = useT();
+  const tunnel = useOffice((s) => s.state.access.tunnel);
+  const noTokens = useOffice((s) => !s.state.access.tokens.length);
+  const missing = tunnel?.error?.includes('not found');
+  return (
+    <Card title={t.access.tunnel} description={t.access.tunnelText}>
+      <div className="grid gap-3 text-xs text-zinc-600 dark:text-zinc-400">
+        {tunnel?.running ? (
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              {tunnel.url ? (
+                <CopyLine text={tunnel.url} />
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <Spinner className="h-3.5 w-3.5" /> {t.access.tunnelOpening(tunnel.tool)}
+                </span>
+              )}
+            </div>
+            <Button size="sm" variant="danger" icon="stop" onClick={() => act(() => api('DELETE', '/api/tunnel'))}>
+              {t.access.tunnelClose}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="primary" icon="globe" onClick={() => act(() => api('POST', '/api/tunnel', { tool: 'cloudflared' }))}>
+              {t.access.openCloudflared}
+            </Button>
+            <Button size="sm" icon="globe" onClick={() => act(() => api('POST', '/api/tunnel', { tool: 'ngrok' }))}>
+              {t.access.openNgrok}
+            </Button>
+          </div>
+        )}
+        {tunnel?.error && (
+          <div className="grid gap-1.5 rounded-xl bg-red-50 p-3 text-red-800 dark:bg-red-950/40 dark:text-red-200">
+            <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{missing ? t.access.tunnelMissing(tunnel.tool) : tunnel.error}</p>
+            {missing && <CopyLine text={`brew install ${tunnel.tool}`} />}
+            {tunnel.tool === 'ngrok' && !missing && <p>{t.access.ngrokHint}</p>}
+          </div>
+        )}
+        {noTokens && <p className="text-amber-700 dark:text-amber-300">{t.access.tunnelNeedsToken}</p>}
+        <details className="group">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 select-none [&::-webkit-details-marker]:hidden">
+            <Icon name="chevronRight" className="h-3 w-3 transition-transform group-open:rotate-90" /> {t.access.manual}
+          </summary>
+          <div className="mt-2 grid gap-1.5">
+            <CopyLine text={`cloudflared tunnel --url http://127.0.0.1:${port}`} />
+            <CopyLine text={`ngrok http 127.0.0.1:${port}`} />
+          </div>
+        </details>
+      </div>
+    </Card>
+  );
+}
+
+// Tokens de acesso externo: o valor aparece uma vez, ao criar, já com os links prontos para abrir em outro aparelho.
+function TokensCard({ bases }: { bases: string[] }) {
+  const t = useT();
+  const tokens = useOffice((s) => s.state.access.tokens);
+  const tunnelUrl = useOffice((s) => s.state.access.tunnel?.url);
+  const [name, setName] = useState('');
+  const [created, setCreated] = useState<{ name: string; token: string } | null>(null);
+  const create = async () => {
+    const r = await act(() => api<{ name: string; token: string }>('POST', '/api/access/tokens', { name }));
+    if (r) {
+      setCreated(r);
+      setName('');
+    }
+  };
+  const links = created ? [...(tunnelUrl ? [tunnelUrl] : []), ...bases].map((b) => `${b}/?token=${created.token}`) : [];
+  return (
+    <Card title={t.access.tokens} description={t.access.tokensText}>
+      <div className="grid gap-3 text-xs">
+        {created && (
+          <div className="grid gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+            <p>{t.access.created(created.name)}</p>
+            <CopyLine text={created.token} />
+            {links.length > 0 && <p className="mt-1 font-medium">{t.access.accessLinks}</p>}
+            {links.map((l) => (
+              <CopyLine key={l} text={l} />
+            ))}
+          </div>
+        )}
+        {tokens.length ? (
+          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {tokens.map((k) => (
+              <li key={k.id} className="flex items-center gap-3 py-2">
+                <Icon name="lock" className="h-3.5 w-3.5 text-zinc-400" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{k.name}</div>
+                  <div className="text-zinc-500">{t.access.tokenMeta(ago(k.created_at), k.last_used_at && ago(k.last_used_at))}</div>
+                </div>
+                <ConfirmButton size="sm" icon="trash" confirm={t.access.revokeQ} onConfirm={() => act(() => api('DELETE', `/api/access/tokens/${k.id}`))}>
+                  {t.access.revoke}
+                </ConfirmButton>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-zinc-500">{t.access.noTokens}</p>
+        )}
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) create();
+          }}
+        >
+          <Input className="flex-1" value={name} maxLength={60} placeholder={t.access.tokenName} onChange={(e) => setName(e.target.value)} />
+          <Button size="md" variant="primary" icon="plus" type="submit" disabled={!name.trim()}>
+            {t.access.createToken}
+          </Button>
+        </form>
+      </div>
+    </Card>
   );
 }
 

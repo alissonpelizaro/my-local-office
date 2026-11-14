@@ -5,6 +5,9 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 // Instalação pelo install.sh: o app é trocado a cada versão, os dados ficam ao lado ($MLO_HOME/data).
 export const DATA = process.env.OFFICE_DATA ?? (process.env.MLO_HOME ? path.join(process.env.MLO_HOME, 'data') : path.resolve(import.meta.dirname, '../../../data'));
 fs.mkdirSync(DATA, { recursive: true, mode: 0o700 });
+// Anexos do chat: os funcionários leem daqui (o runner passa a pasta em --add-dir).
+export const UPLOADS = path.join(DATA, 'uploads');
+fs.mkdirSync(UPLOADS, { recursive: true, mode: 0o700 });
 
 export const db = new DatabaseSync(path.join(DATA, 'office.db'));
 db.exec(`
@@ -96,6 +99,15 @@ db.exec(`
     data TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS events_task ON events (task_id);
+
+  -- Tokens de acesso externo (rede, túnel): só o hash; o token aparece uma vez, ao criar.
+  CREATE TABLE IF NOT EXISTS access_tokens (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+  );
 `);
 
 // Migrações aditivas: colunas novas em bancos criados por versões anteriores.
