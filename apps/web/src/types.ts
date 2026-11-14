@@ -115,7 +115,7 @@ export type Settings = {
 };
 
 // GET /api/system: endereços para abrir de fora e por onde saem as notificações.
-export type SystemInfo = { port: number; host: string; lan: boolean; tokenSet: boolean; local: string; network: string[]; notifier: 'app' | 'macos' | 'linux' | 'none'; app: boolean };
+export type SystemInfo = { port: number; host: string; lan: boolean; local: string; network: string[]; notifier: 'app' | 'macos' | 'linux' | 'none'; app: boolean };
 
 export type Costs = {
   days: number;
@@ -144,6 +144,10 @@ export type OfficeState = {
   tasks: Task[];
   approvals: Approval[];
   settings: Settings;
+  access: {
+    tokens: { id: number; name: string; created_at: string; last_used_at: string | null }[];
+    tunnel: { tool: 'ngrok' | 'cloudflared'; url: string | null; error: string | null; running: boolean } | null;
+  };
 };
 
 export type OfficeEvent = {

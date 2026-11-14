@@ -3,11 +3,11 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { countTokens, proxyMessages } from './bridge.js';
-import { eventsAfter, eventsOfTask, subscribe } from './bus.ts';
+import { eventsAfter, eventsOfTask, publish, subscribe } from './bus.ts';
 import * as chat from './chat.ts';
-import { access, SESSION_COOKIE } from './access.ts';
-import { HOST, PORT, TOKEN } from './config.ts';
-import { get, type Provider } from './db.ts';
+import { access, createToken, deleteToken, listTokens, sessionCookie, startTunnel, stopTunnel, tunnelInfo } from './access.ts';
+import { HOST, PORT } from './config.ts';
+import { get, type Provider, UPLOADS } from './db.ts';
 import { discover, importRepos } from './importer.ts';
 import { handleMcp } from './mcp.ts';
 import { models, refreshModels } from './models.ts';
@@ -24,6 +24,10 @@ const MIME: Record<string, string> = {
   '.css': 'text/css',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.json': 'application/json',
   '.woff2': 'font/woff2',
@@ -82,6 +86,19 @@ function serveFile(res: ServerResponse, file: string, immutable = false) {
   fs.createReadStream(file).on('error', () => res.end()).pipe(res);
 }
 
+// Anexo do chat: corpo cru vira um arquivo em data/uploads; a mensagem leva o caminho e o funcionário lê com Read.
+async function upload(req: IncomingMessage, name: string) {
+  const file = path.join(UPLOADS, `${Date.now().toString(36)}-${name.replace(/[^\w.-]+/g, '_').slice(-80) || 'file'}`);
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const c of req) {
+    if ((size += c.length) > 25e6) throw new office.HttpError(413, 'file too large (max 25 MB)');
+    chunks.push(c);
+  }
+  fs.writeFileSync(file, Buffer.concat(chunks), { mode: 0o600 });
+  return { path: file };
+}
+
 // Ponte para provedores OpenAI-compatíveis: o Claude Code fala Messages com /bridge/:id e a ponte traduz.
 async function bridge(req: IncomingMessage, res: ServerResponse, providerId: number, countOnly: boolean) {
   const p = get<Provider>('SELECT * FROM providers WHERE id = ?', providerId);
@@ -102,7 +119,6 @@ function system() {
     port: PORT,
     host: HOST,
     lan,
-    tokenSet: TOKEN.length >= 16,
     local: `http://127.0.0.1:${PORT}`,
     network: (lan && HOST !== '0.0.0.0' ? [HOST] : ips).map((ip) => `http://${ip}:${PORT}`),
     notifier: notifier(),
@@ -118,8 +134,10 @@ function quit() {
 }
 
 type Handler = (body: any, params: string[], url: URL) => unknown;
+// Tokens e túnel vão no /api/state: avisa a UI pelo SSE.
+const changed = <T>(r: T) => (publish('state.changed'), r);
 const routes: [string, RegExp, Handler][] = [
-  ['GET', /^\/api\/state$/, () => ({ ...office.state(), app: updateInfo() })],
+  ['GET', /^\/api\/state$/, () => ({ ...office.state(), app: updateInfo(), access: { tokens: listTokens(), tunnel: tunnelInfo() } })],
   ['PATCH', /^\/api\/settings$/, (b) => updateSettings(b)],
   ['POST', /^\/api\/departments$/, (b) => office.createDepartment(b)],
   ['PATCH', /^\/api\/departments\/(\d+)$/, (b, [id]) => office.updateDepartment(Number(id), b)],
@@ -159,19 +177,24 @@ const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/system$/, () => system()],
   ['POST', /^\/api\/notify\/test$/, () => testNotification()],
   ['POST', /^\/api\/app\/quit$/, () => quit()],
+  ['POST', /^\/api\/access\/tokens$/, (b) => changed(createToken(b.name))],
+  ['DELETE', /^\/api\/access\/tokens\/(\d+)$/, (_, [id]) => changed(deleteToken(Number(id)))],
+  ['POST', /^\/api\/tunnel$/, (b) => changed(startTunnel(b.tool))],
+  ['DELETE', /^\/api\/tunnel$/, () => changed(stopTunnel())],
 ];
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const { host, origin, cookie } = req.headers;
-  const verdict = access({ remote: req.socket.remoteAddress, host, origin, cookie, token: url.searchParams.get('token') });
+  const token = url.searchParams.get('token');
+  const verdict = access({ remote: req.socket.remoteAddress, host, origin, cookie, token });
   if (verdict === 'login') {
     url.searchParams.delete('token');
-    res.writeHead(302, { 'set-cookie': SESSION_COOKIE, location: url.pathname + url.search });
+    res.writeHead(302, { 'set-cookie': sessionCookie(token!), location: url.pathname + url.search });
     return res.end();
   }
   if (verdict === 'forbidden') return send(res, 403, { error: 'origin not allowed' });
-  if (verdict === 'unauthorized') return send(res, 401, { error: 'open /?token=<OFFICE_TOKEN> once on this device' });
+  if (verdict === 'unauthorized') return send(res, 401, { error: 'open /?token=<access token> once on this device (Settings → Access)' });
 
   const p = url.pathname;
   try {
@@ -180,6 +203,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/mcp') return req.method === 'POST' ? await handleMcp(req, res, await readJson(req, 16e6)) : send(res, 405, { error: 'use POST' });
     const b = req.method === 'POST' && p.match(/^\/bridge\/(\d+)\/v1\/messages(\/count_tokens)?$/);
     if (b) return await bridge(req, res, Number(b[1]), Boolean(b[2]));
+    if (req.method === 'POST' && p === '/api/uploads') return send(res, 200, await upload(req, url.searchParams.get('name') ?? ''));
+    const u = req.method === 'GET' && p.match(/^\/api\/uploads\/(\w[\w.-]*)$/);
+    if (u) return fs.existsSync(path.join(UPLOADS, u[1])) ? serveFile(res, path.join(UPLOADS, u[1])) : send(res, 404, { error: 'not found' });
 
     for (const [method, re, handler] of routes) {
       const m = req.method === method && p.match(re);
@@ -211,6 +237,7 @@ setInterval(checkUpdate, 6 * 3_600_000).unref();
 // Processos `claude` filhos não sobrevivem ao server: sem o MCP dele, ficariam rodando às cegas.
 function shutdown(code = 0) {
   stopAll();
+  stopTunnel();
   server.close();
   setTimeout(() => process.exit(code), 500).unref();
 }

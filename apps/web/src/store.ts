@@ -88,6 +88,7 @@ const EMPTY: OfficeState = {
   providers: [],
   tasks: [],
   approvals: [],
+  access: { tokens: [], tunnel: null },
   app: { version: '', latest: null, releaseUrl: null, checkedAt: null, canUpdate: false, updating: false, error: null, available: false },
   settings: {
     maxConcurrent: 3,

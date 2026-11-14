@@ -9,7 +9,8 @@ import { msg } from './i18n.ts';
 import { createTask, HttpError, isRunning, messageTask } from './office.ts';
 
 function titleOf(text: string) {
-  const line = String(text ?? '').trim().split('\n')[0];
+  // Anexo (`📎 /…/uploads/<id>-nome`) vira só o nome no título.
+  const line = String(text ?? '').trim().split('\n')[0].replace(/^📎 .*\/[a-z0-9]+-/, '📎 ');
   if (!line) throw new HttpError(400, msg().emptyMessage);
   return line.length > 80 ? `${line.slice(0, 79)}…` : line;
 }

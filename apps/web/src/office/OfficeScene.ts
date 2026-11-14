@@ -75,6 +75,8 @@ type Char = {
   bubbleDx: number; // em conversa, cada um fala para um lado para os balões não se cobrirem
   bob?: Phaser.Tweens.Tween;
   walking: boolean;
+  trail: Pt[]; // pontos já alcançados desde que saiu de `room` (só muda ao chegar)
+  heading?: { room: string; rest: Pt[] }; // caminhada em curso (ou interrompida): destino e pontos que faltam
   cancelWalk?: () => void;
   arrival?: Promise<boolean>;
   mission: boolean; // visitando um colega: não volta para a mesa sozinho
@@ -607,6 +609,7 @@ export class OfficeScene extends Phaser.Scene {
       pending: false,
       bubbleDx: 0,
       walking: false,
+      trail: [],
       mission: false,
       away: false,
       atSpot: false,
@@ -730,12 +733,20 @@ export class OfficeScene extends Phaser.Scene {
     this.tweens.add({ targets: c.alert, scale: 1.2, duration: 450, yoyo: true, repeat: -1 });
   }
 
+  // Vai até `to` sem atravessar paredes. Interrompido no meio do caminho (um comando chega enquanto anda), segue o
+  // que faltava se o destino é a mesma sala; senão refaz os passos até a sala de onde saiu e roteia de lá.
+  private go(c: Char, toRoom: string, to: Pt) {
+    c.cancelWalk?.();
+    const h = c.heading;
+    const points = h?.room === toRoom ? [...h.rest.slice(0, -1), to] : [...c.trail.toReversed(), ...route(this.plan!, c.room, toRoom, to)];
+    return this.walk(c, points, toRoom);
+  }
+
   // Anda pelos pontos; resolve true ao chegar, false se outra caminhada a interromper.
   private walk(c: Char, points: Pt[], toRoom: string): Promise<boolean> {
     c.cancelWalk?.();
     c.bob?.stop();
     c.figure.y = 0;
-    c.room = toRoom;
     c.walking = true;
     const step = this.tweens.add({ targets: c.figure, y: -2.5, duration: 110, yoyo: true, repeat: -1 });
     return new Promise((resolve) => {
@@ -747,6 +758,9 @@ export class OfficeScene extends Phaser.Scene {
         c.figure.y = 0;
         c.cancelWalk = undefined;
         if (arrived) {
+          c.room = toRoom;
+          c.trail = [];
+          c.heading = undefined;
           c.walking = false;
           this.updateBob(c);
         }
@@ -759,11 +773,12 @@ export class OfficeScene extends Phaser.Scene {
       const next = (i: number) => {
         if (done) return;
         if (i >= points.length) return finish(true);
+        c.heading = { room: toRoom, rest: points.slice(i) };
         const t = pt(points[i].gx, points[i].gy);
         const dist = Phaser.Math.Distance.Between(c.root.x, c.root.y, t.x, t.y);
         // Olha para onde anda: subindo na tela fica de costas; espelha para a esquerda.
         if (dist > 1) this.face(c, t.y < c.root.y - 0.5 ? 'back' : 'front', t.x < c.root.x);
-        this.tweens.add({ targets: c.root, x: t.x, y: t.y, duration: Math.max(60, (dist / SPEED) * 1000), onComplete: () => next(i + 1) });
+        this.tweens.add({ targets: c.root, x: t.x, y: t.y, duration: Math.max(60, (dist / SPEED) * 1000), onComplete: () => (c.trail.push(points[i]), next(i + 1)) });
       };
       next(0);
     });
@@ -781,7 +796,7 @@ export class OfficeScene extends Phaser.Scene {
     if (!seat) return;
     this.leaveSpot(c);
     c.away = true;
-    if (!(await this.walk(c, route(this.plan!, c.room, seat.roomId, seat.seat), seat.roomId))) return;
+    if (!(await this.go(c, seat.roomId, seat.seat))) return;
     this.face(c, 'back'); // sentado, virado para o monitor
     c.away = false;
     c.mission = false;
@@ -799,7 +814,7 @@ export class OfficeScene extends Phaser.Scene {
     c.mission = true;
     c.away = true;
     this.drawScreen(c);
-    c.arrival = this.walk(c, route(this.plan!, c.room, target.roomId, target.visitor), target.roomId);
+    c.arrival = this.go(c, target.roomId, target.visitor);
     c.arrival.then((arrived) => {
       if (!arrived) return;
       this.face(c, 'back', true); // de lado para o colega, à esquerda
@@ -911,7 +926,7 @@ export class OfficeScene extends Phaser.Scene {
       c.away = true;
       c.nextWander = now + Phaser.Math.Between(15000, 35000);
       this.drawScreen(c);
-      this.walk(c, route(this.plan, c.room, spot.roomId, spot), spot.roomId).then((arrived) => {
+      this.go(c, spot.roomId, spot).then((arrived) => {
         if (!arrived || c.spot !== spot) return;
         this.face(c, spot.face);
         c.atSpot = true;
@@ -1019,6 +1034,8 @@ export class OfficeScene extends Phaser.Scene {
       c.spot = undefined;
       c.atSpot = false;
       c.room = seat.roomId;
+      c.trail = [];
+      c.heading = undefined;
       const p = pt(seat.seat.gx, seat.seat.gy);
       c.root.setPosition(p.x, p.y);
       this.face(c, 'back');

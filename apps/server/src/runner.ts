@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { type Activity, publish, setActivity } from './bus.ts';
 import { CLAUDE_BIN, OFFICE_TOOL_TIMEOUT_MS, PORT } from './config.ts';
-import { type Employee, get, type Provider, run } from './db.ts';
+import { type Employee, get, type Provider, run, UPLOADS } from './db.ts';
 import { childEnv } from './providers.ts';
 import { settings } from './settings.ts';
 
@@ -101,6 +101,7 @@ export function startRun(o: StartRun): Run {
     ...(o.kind === 'task' && o.employee.connectors ? [] : ['--strict-mcp-config']),
     '--permission-prompt-tool', 'mcp__office__approve',
     '--allowedTools', OFFICE_TOOLS.join(','),
+    '--add-dir', UPLOADS,
     '--append-system-prompt', o.systemPrompt,
     ...(model ? ['--model', model] : []),
     ...(EFFORTS.includes(effort) ? ['--effort', effort] : []),
