@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { webAlert } from './alerts';
 import { DICTS, isLang, type Lang } from './i18n';
 import type { ChatTarget, Models, OfficeEvent, OfficeState, Task } from './types';
 
@@ -16,7 +17,7 @@ export async function api<T = unknown>(method: string, url: string, body?: unkno
 export type Tab = 'office' | 'tasks' | 'costs' | 'config';
 export type PanelTab = 'chat' | 'history' | 'settings';
 export type TaskView = 'active' | 'planned' | 'history';
-export type ConfigSection = 'team' | 'import' | 'providers' | 'office' | 'about';
+export type ConfigSection = 'team' | 'import' | 'providers' | 'office' | 'access' | 'about';
 export type Theme = 'light' | 'dark' | 'system';
 type Toast = { id: number; text: string; tone: 'error' | 'info' | 'success'; action?: { label: string; run: () => void }; leaving?: boolean };
 
@@ -104,6 +105,8 @@ const EMPTY: OfficeState = {
     autoAllowReadOnly: true,
     onlyAskExternal: true,
     profileRefreshCommits: 40,
+    defaultProviderId: 0,
+    notifySound: true,
   },
 };
 
@@ -278,8 +281,13 @@ export function connect() {
     }
     set(patch);
     if (!QUIET.has(e.type)) refreshSoon();
-    // O backlog enviado ao conectar vai para o log, mas não é animado.
-    if (!s.replay && Date.parse(e.ts) >= openedAt - 1500) emit(e, false);
+    // O backlog enviado ao conectar vai para o log, mas não é animado (nem avisa).
+    if (Date.parse(e.ts) < openedAt - 1500) return;
+    if (!s.replay) emit(e, false);
+    if (e.type === 'approval.requested' && s.state.settings.notifyApprovals) {
+      const who = s.state.employees.find((x) => x.id === e.employeeId)?.name ?? tr().common.office;
+      webAlert(tr().inbox.needsYou(who), e.data?.payload?.question ?? e.data?.payload?.summary ?? e.data?.payload?.title ?? '', s.state.settings.notifySound);
+    }
   };
   return () => es.close();
 }

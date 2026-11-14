@@ -2,17 +2,19 @@ import { useEffect, useState } from 'react';
 import { ago } from '../format';
 import { LANG_LABEL, LANGS } from '../i18n';
 import { act, api, type ConfigSection, openDeptModel, openHire, openNewDept, openSetup, setLanguage, setTheme, toast, useOffice, useT } from '../store';
-import type { AppInfo, Department, DiscoveredRepo, Employee, Provider, Settings } from '../types';
-import { EffortSelect, ModelSelect, ModelsStatus } from './EmployeeSettings';
+import type { AppInfo, Department, DiscoveredRepo, Employee, Provider, Settings, SystemInfo } from '../types';
+import { testWebAlert, webAlerts } from '../alerts';
+import { EffortSelect, ModelSelect, ModelsStatus, ProviderSelect } from './EmployeeSettings';
 import { EmployeeSettings } from './EmployeeSettings';
 import { Icon, type IconName } from './icons';
-import { Avatar, Button, Card, Chip, ConfirmButton, cx, Empty, Field, Input, Saved, Segmented, Select, SettingRow, Stepper, Switch } from './ui';
+import { Avatar, Button, Card, Chip, ConfirmButton, cx, Empty, Field, Input, Saved, Segmented, Select, SettingRow, Skeleton, Stepper, Switch } from './ui';
 
 const SECTIONS: { value: ConfigSection; icon: IconName }[] = [
   { value: 'team', icon: 'users' },
   { value: 'import', icon: 'download' },
   { value: 'providers', icon: 'server' },
   { value: 'office', icon: 'sliders' },
+  { value: 'access', icon: 'globe' },
   { value: 'about', icon: 'info' },
 ];
 
@@ -33,7 +35,7 @@ export function ConfigTab() {
       {/* Navegação: lista lateral no desktop, faixa rolável no celular. */}
       <nav className="shrink-0 border-b border-zinc-200 bg-white lg:w-64 lg:border-r lg:border-b-0 dark:border-zinc-800 dark:bg-zinc-950">
         <h1 className="hidden px-5 pt-6 pb-3 text-xl font-semibold lg:block">{t.config.title}</h1>
-        <div className="flex gap-1 overflow-x-auto p-2 lg:grid lg:p-3">
+        <div className="flex gap-1 overflow-x-auto p-2 lg:grid lg:grid-cols-1 lg:p-3">
           {SECTIONS.map((s) => (
             <button
               key={s.value}
@@ -60,6 +62,7 @@ export function ConfigTab() {
           {section === 'import' && <ImportSection onDone={() => setSection('team')} />}
           {section === 'providers' && <ProvidersSection />}
           {section === 'office' && <SettingsSection />}
+          {section === 'access' && <AccessSection />}
           {section === 'about' && <AboutSection />}
         </div>
       </div>
@@ -343,29 +346,15 @@ export function RepoImporter({ onHired, preferExisting }: { onHired?: () => void
 
 // ---------- provedores ----------
 
-const BLANK = { name: '', format: 'openai' as Provider['format'], baseUrl: '', apiKey: '', model: '', smallModel: '', contextWindow: '', maxParallel: '1' };
+export const BLANK = { name: '', format: 'openai' as Provider['format'], baseUrl: '', apiKey: '', model: '', smallModel: '', contextWindow: '', maxParallel: '1' };
 // O Ollama fala a API da Anthropic direto. A janela precisa bater com o contexto carregado nele (OLLAMA_CONTEXT_LENGTH).
-const OLLAMA: typeof BLANK = { ...BLANK, name: 'Ollama', format: 'anthropic', baseUrl: 'http://127.0.0.1:11434', contextWindow: '65536' };
+export const OLLAMA: typeof BLANK = { ...BLANK, name: 'Ollama', format: 'anthropic', baseUrl: 'http://127.0.0.1:11434', contextWindow: '65536' };
 const isLocal = (url: string) => /\/\/(127\.0\.0\.1|localhost)\b/.test(url);
 
 function ProvidersSection() {
   const t = useT();
   const providers = useOffice((s) => s.state.providers);
-  const [form, setForm] = useState<typeof BLANK | null>(null);
-  const [editing, setEditing] = useState<number | null>(null);
-  const [found, setFound] = useState<string[]>([]); // modelos que o provedor anuncia, só como sugestão
-  const bind = (k: keyof typeof BLANK) => ({ value: form?.[k] ?? '', onChange: (e: { target: { value: string } }) => setForm((f) => ({ ...(f ?? BLANK), [k]: e.target.value })) });
-  const loadModels = (f: typeof BLANK, id = editing) => f.baseUrl.trim() && api<string[]>('POST', '/api/providers/models', { ...f, id }).then(setFound, () => setFound([]));
-  const open = (f: typeof BLANK, id: number | null = null) => {
-    setForm(f);
-    setEditing(id);
-    setFound([]);
-    loadModels(f, id);
-  };
-  const close = () => {
-    setForm(null);
-    setEditing(null);
-  };
+  const [form, setForm] = useState<{ initial: typeof BLANK; id: number | null } | null>(null);
 
   return (
     <>
@@ -375,10 +364,10 @@ function ProvidersSection() {
         actions={
           !form && (
             <div className="flex gap-2">
-              <Button size="sm" icon="server" onClick={() => open(OLLAMA)}>
+              <Button size="sm" icon="server" onClick={() => setForm({ initial: OLLAMA, id: null })}>
                 {t.providers.ollama}
               </Button>
-              <Button size="sm" icon="plus" onClick={() => open(BLANK)}>
+              <Button size="sm" icon="plus" onClick={() => setForm({ initial: BLANK, id: null })}>
                 {t.providers.new}
               </Button>
             </div>
@@ -387,7 +376,7 @@ function ProvidersSection() {
       >
         <div className="grid gap-2">
           {providers.map((p) => (
-            <div key={p.id} className={cx('flex flex-wrap items-center gap-3 rounded-xl border p-3 text-sm', editing === p.id ? 'border-blue-500' : 'border-zinc-200 dark:border-zinc-800')}>
+            <div key={p.id} className={cx('flex flex-wrap items-center gap-3 rounded-xl border p-3 text-sm', form?.id === p.id ? 'border-blue-500' : 'border-zinc-200 dark:border-zinc-800')}>
               <span className="grid h-8 w-8 place-items-center rounded-lg bg-zinc-100 text-zinc-500 dark:bg-zinc-800">
                 <Icon name="server" className="h-4 w-4" />
               </span>
@@ -408,10 +397,10 @@ function ProvidersSection() {
                 size="sm"
                 icon="pencil"
                 onClick={() =>
-                  open(
-                    { name: p.name, format: p.format, baseUrl: p.base_url, apiKey: '', model: p.model, smallModel: p.small_model ?? '', contextWindow: p.context_window ? String(p.context_window) : '', maxParallel: String(p.max_parallel) },
-                    p.id,
-                  )
+                  setForm({
+                    initial: { name: p.name, format: p.format, baseUrl: p.base_url, apiKey: '', model: p.model, smallModel: p.small_model ?? '', contextWindow: p.context_window ? String(p.context_window) : '', maxParallel: String(p.max_parallel) },
+                    id: p.id,
+                  })
                 }
               >
                 {t.common.edit}
@@ -430,75 +419,102 @@ function ProvidersSection() {
       </Card>
 
       {form && (
-        <Card title={editing ? t.providers.edit : t.providers.new} className="animate-rise">
-          <form
-            className="grid gap-4 sm:grid-cols-2"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const ok = await act(() => (editing ? api('PATCH', `/api/providers/${editing}`, form) : api('POST', '/api/providers', form)));
-              if (ok) {
-                toast(editing ? t.providers.updated : t.providers.added, 'success');
-                close();
-              }
-            }}
-          >
-            <Field label={t.providers.name}>
-              <Input placeholder={t.providers.namePlaceholder} required autoFocus {...bind('name')} />
-            </Field>
-            <Field group label={t.providers.format}>
-              <Segmented
-                value={form.format}
-                onChange={(format) => setForm({ ...form, format })}
-                className="w-full [&>button]:flex-1"
-                size="sm"
-                options={[
-                  { value: 'openai', label: t.providers.openai },
-                  { value: 'anthropic', label: t.providers.anthropic },
-                ]}
-              />
-            </Field>
-            <Field label={t.providers.baseUrl} hint={form.format === 'openai' ? t.providers.baseUrlOpenai : t.providers.baseUrlAnthropic}>
-              <Input required {...bind('baseUrl')} onBlur={() => loadModels(form)} />
-            </Field>
-            <Field label={t.providers.apiKey} hint={editing ? t.providers.keyKeep : isLocal(form.baseUrl) ? t.providers.keyLocal : t.providers.keyStored}>
-              <Input type="password" autoComplete="off" {...bind('apiKey')} onBlur={() => loadModels(form)} />
-            </Field>
-            <Field label={t.providers.model} hint={found.length ? t.providers.modelFound(found.length) : t.providers.modelHint}>
-              <Input placeholder="gpt-4o" required list="provider-models" {...bind('model')} />
-            </Field>
-            <Field label={t.providers.small} hint={t.providers.smallHint}>
-              <Input placeholder="gpt-4o-mini" list="provider-models" {...bind('smallModel')} />
-            </Field>
-            <Field label={t.providers.context} hint={t.providers.contextHint}>
-              <Input inputMode="numeric" placeholder="65536" {...bind('contextWindow')} />
-            </Field>
-            <Field label={t.providers.parallel} hint={t.providers.parallelHint}>
-              <Input inputMode="numeric" placeholder="1" {...bind('maxParallel')} />
-            </Field>
-            <datalist id="provider-models">
-              {found.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-            <div className="flex justify-end gap-2 sm:col-span-2">
-              <Button type="button" variant="ghost" onClick={close}>
-                {t.common.cancel}
-              </Button>
-              <Button type="submit" variant="primary">
-                {editing ? t.common.save : t.providers.add}
-              </Button>
-            </div>
-          </form>
+        <Card title={form.id ? t.providers.edit : t.providers.new} className="animate-rise">
+          <ProviderForm key={JSON.stringify(form)} initial={form.initial} id={form.id} onSaved={() => setForm(null)} onCancel={() => setForm(null)} />
         </Card>
       )}
     </>
   );
 }
 
+// Cadastro de provedor (Configuração e assistente). Sugere os modelos que o endpoint anuncia.
+export function ProviderForm({ initial, id = null, onSaved, onCancel }: { initial: typeof BLANK; id?: number | null; onSaved: (p: Provider) => void; onCancel: () => void }) {
+  const t = useT();
+  const [form, setForm] = useState(initial);
+  const [found, setFound] = useState<string[]>([]); // modelos que o provedor anuncia, só como sugestão
+  const [busy, setBusy] = useState(false);
+  const bind = (k: keyof typeof BLANK) => ({ value: form[k], onChange: (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value })) });
+  const loadModels = (f = form) => f.baseUrl.trim() && api<string[]>('POST', '/api/providers/models', { ...f, id }).then(setFound, () => setFound([]));
+  useEffect(() => {
+    loadModels(initial);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <form
+      className="grid gap-4 sm:grid-cols-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        const saved = await act(() => (id ? api<Provider>('PATCH', `/api/providers/${id}`, form) : api<Provider>('POST', '/api/providers', form)));
+        setBusy(false);
+        if (!saved) return;
+        toast(id ? t.providers.updated : t.providers.added, 'success');
+        onSaved(saved);
+      }}
+    >
+      <Field label={t.providers.name}>
+        <Input placeholder={t.providers.namePlaceholder} required autoFocus {...bind('name')} />
+      </Field>
+      <Field group label={t.providers.format}>
+        <Segmented
+          value={form.format}
+          onChange={(format) => setForm({ ...form, format })}
+          className="w-full [&>button]:flex-1"
+          size="sm"
+          options={[
+            { value: 'openai', label: t.providers.openai },
+            { value: 'anthropic', label: t.providers.anthropic },
+          ]}
+        />
+      </Field>
+      <Field label={t.providers.baseUrl} hint={form.format === 'openai' ? t.providers.baseUrlOpenai : t.providers.baseUrlAnthropic}>
+        <Input required {...bind('baseUrl')} onBlur={() => loadModels()} />
+      </Field>
+      <Field label={t.providers.apiKey} hint={id ? t.providers.keyKeep : isLocal(form.baseUrl) ? t.providers.keyLocal : t.providers.keyStored}>
+        <Input type="password" autoComplete="off" {...bind('apiKey')} onBlur={() => loadModels()} />
+      </Field>
+      <Field label={t.providers.model} hint={found.length ? t.providers.modelFound(found.length) : t.providers.modelHint}>
+        <Input placeholder="gpt-4o" required list="provider-models" {...bind('model')} />
+      </Field>
+      <Field label={t.providers.small} hint={t.providers.smallHint}>
+        <Input placeholder="gpt-4o-mini" list="provider-models" {...bind('smallModel')} />
+      </Field>
+      <Field label={t.providers.context} hint={t.providers.contextHint}>
+        <Input inputMode="numeric" placeholder="65536" {...bind('contextWindow')} />
+      </Field>
+      <Field label={t.providers.parallel} hint={t.providers.parallelHint}>
+        <Input inputMode="numeric" placeholder="1" {...bind('maxParallel')} />
+      </Field>
+      <datalist id="provider-models">
+        {found.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+      <div className="flex justify-end gap-2 sm:col-span-2">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          {t.common.cancel}
+        </Button>
+        <Button type="submit" variant="primary" busy={busy}>
+          {id ? t.common.save : t.providers.add}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 // ---------- preferências do escritório ----------
+
+const useSystem = () => {
+  const [sys, setSys] = useState<SystemInfo | null>(null);
+  useEffect(() => {
+    api<SystemInfo>('GET', '/api/system').then(setSys, () => {});
+  }, []);
+  return sys;
+};
 
 function SettingsSection() {
   const t = useT();
+  const sys = useSystem();
   const settings = useOffice((s) => s.state.settings);
   const theme = useOffice((s) => s.theme);
   const lang = useOffice((s) => s.lang);
@@ -558,6 +574,11 @@ function SettingsSection() {
 
       <Card title={t.settings.models}>
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <SettingRow title={t.settings.defaultProvider} description={t.settings.defaultProviderHint}>
+            <div className="w-56">
+              <ProviderSelect value={settings.defaultProviderId || null} onChange={(id) => save({ defaultProviderId: id ?? 0 })} />
+            </div>
+          </SettingRow>
           <SettingRow title={t.settings.defaultModel} description={t.settings.defaultModelHint}>
             <div className="w-56">
               <ModelSelect allowDefault={false} value={settings.defaultModel} onChange={(defaultModel) => save({ defaultModel })} />
@@ -590,7 +611,7 @@ function SettingsSection() {
         </div>
       </Card>
 
-      <Card title={t.settings.notifications}>
+      <Card title={t.settings.notifications} description={sys ? t.settings.notifyVia[sys.notifier] : undefined}>
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
           <SettingRow title={t.settings.notifyApprovals} description={t.settings.notifyApprovalsHint}>
             <Switch label={t.settings.notifyApprovals} checked={settings.notifyApprovals} onChange={(notifyApprovals) => save({ notifyApprovals })} />
@@ -598,8 +619,117 @@ function SettingsSection() {
           <SettingRow title={t.settings.notifyFinished} description={t.settings.notifyFinishedHint}>
             <Switch label={t.settings.notifyFinished} checked={settings.notifyTaskFinished} onChange={(notifyTaskFinished) => save({ notifyTaskFinished })} />
           </SettingRow>
+          <SettingRow title={t.settings.notifySound} description={t.settings.notifySoundHint}>
+            <Switch label={t.settings.notifySound} checked={settings.notifySound} onChange={(notifySound) => save({ notifySound })} />
+          </SettingRow>
+          <SettingRow title={t.settings.notifyTest} description={t.settings.notifyTestHint}>
+            <Button
+              size="sm"
+              icon="bell"
+              onClick={async () => {
+                if (webAlerts) await testWebAlert(settings.notifySound);
+                const r = await act(() => api<{ via: SystemInfo['notifier'] }>('POST', '/api/notify/test'));
+                if (r) toast(t.settings.notifySent[r.via], r.via === 'none' ? 'info' : 'success');
+              }}
+            >
+              {t.settings.notifyTestBtn}
+            </Button>
+          </SettingRow>
         </div>
       </Card>
+    </>
+  );
+}
+
+// ---------- acesso: endereços, túnel e o app ----------
+
+function CopyLine({ text }: { text: string }) {
+  const t = useT();
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-zinc-100 py-1 pr-1 pl-3 font-mono text-xs dark:bg-zinc-800">
+      <span className="min-w-0 flex-1 break-all">{text}</span>
+      <Button
+        size="iconSm"
+        variant="ghost"
+        icon="copy"
+        aria-label={t.access.copy}
+        title={t.access.copy}
+        onClick={() => navigator.clipboard?.writeText(text).then(() => toast(t.access.copied, 'success'), () => {})}
+      />
+    </div>
+  );
+}
+
+function AccessSection() {
+  const t = useT();
+  const sys = useSystem();
+  if (!sys) return <Skeleton className="h-40" />;
+  const env = ['export OFFICE_HOST=0.0.0.0', 'export OFFICE_TOKEN=$(openssl rand -hex 16)'];
+  return (
+    <>
+      <Card title={t.access.title} description={t.access.description}>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <span className="text-xs font-medium text-zinc-500">{t.access.thisComputer}</span>
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <CopyLine text={sys.local} />
+              </div>
+              <a href={sys.local} target="_blank" rel="noreferrer" className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40">
+                {t.access.openBrowser} <Icon name="external" className="h-3 w-3" />
+              </a>
+            </div>
+          </div>
+          {sys.network.length > 0 && (
+            <div className="grid gap-1.5">
+              <span className="flex items-center gap-2 text-xs font-medium text-zinc-500">
+                {t.access.network}
+                <Chip tone={sys.lan ? 'green' : 'amber'}>{sys.lan ? t.access.lanOn : t.access.lanOffChip}</Chip>
+              </span>
+              {sys.network.map((u) => (
+                <div key={u} className={cx(!sys.lan && 'opacity-60')}>
+                  <CopyLine text={u} />
+                </div>
+              ))}
+            </div>
+          )}
+          {sys.lan ? (
+            <p className="text-xs text-zinc-500">{t.access.lanHint(sys.port)}</p>
+          ) : (
+            <div className="grid gap-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <p>{t.access.lanOff}</p>
+              {env.map((l) => (
+                <CopyLine key={l} text={l} />
+              ))}
+              <p>{t.access.restart}</p>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card title={t.access.tunnel} description={t.access.tunnelText}>
+        <div className="grid gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <CopyLine text={`ngrok http ${sys.port}`} />
+          <CopyLine text={`cloudflared tunnel --url http://localhost:${sys.port}`} />
+          {sys.tokenSet ? (
+            <p>{t.access.tunnelToken}</p>
+          ) : (
+            <>
+              <p className="text-amber-700 dark:text-amber-300">{t.access.tunnelNoToken}</p>
+              <CopyLine text={env[1]} />
+              <p>{t.access.restart}</p>
+            </>
+          )}
+        </div>
+      </Card>
+
+      {sys.app && (
+        <Card title={t.access.appTitle} description={t.access.appText}>
+          <ConfirmButton icon="power" idle="secondary" armedVariant="solidDanger" confirm={t.access.quitQ} onConfirm={() => act(() => api('POST', '/api/app/quit'))}>
+            {t.access.quit}
+          </ConfirmButton>
+        </Card>
+      )}
     </>
   );
 }

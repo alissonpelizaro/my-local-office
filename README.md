@@ -22,9 +22,9 @@ macOS and Linux, Intel and ARM. You only need [Claude Code](https://docs.claude.
 curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/install.sh | bash
 ```
 
-It installs the **My Local Office** app and opens it: in `/Applications` on macOS (`~/Applications` if that is not writable), and on Linux as an AppImage in `~/.local/bin/my-local-office` with an entry in the app menu. A setup assistant walks you through the language, your departments and your first hires.
+It installs the **My Local Office** app and opens it: in `/Applications` on macOS (`~/Applications` if that is not writable), and on Linux as an AppImage in `~/.local/bin/my-local-office` with an entry in the app menu. A setup assistant walks you through the language, who does the work (your Claude subscription or a provider such as a local Ollama), your departments and your first hires.
 
-The app runs the office while it is open: on macOS closing the window keeps it running (reopen it from the Dock, quit with ⌘Q); on Linux closing the window quits it. Quitting stops running tasks. Your data lives in `~/.my-local-office/data`, logs in `~/.my-local-office/data/office.log`. The UI is also at **http://127.0.0.1:4410** in any browser while the app is open.
+Closing the window keeps the office running in the tray (the menu bar on macOS): reopen it from the tray icon (or the Dock), and quit with **Shut down** in the tray icon menu, ⌘Q on macOS or **Settings → Access → Shut down the office**. Quitting stops running tasks. On GNOME the tray icon needs the AppIndicator extension; without it, opening the app again brings the window back. Your data lives in `~/.my-local-office/data`, logs in `~/.my-local-office/data/office.log`. The UI is also at **http://127.0.0.1:4410** in any browser while the app is open.
 
 Prefer a manual download? The release has a `.dmg` (macOS) and an `.AppImage`/`.deb` (Linux). The app is not notarized by Apple: if macOS refuses to open a `.dmg` copy, allow it in **System Settings → Privacy & Security → Open Anyway** (the install command does not need this). Some Linux distributions need `libfuse2` for AppImages.
 
@@ -64,7 +64,7 @@ The app reads these from your login shell (`export` them in `~/.zshrc`, `~/.bash
 
 Network access example: `OFFICE_HOST=0.0.0.0 OFFICE_TOKEN=$(openssl rand -hex 16)`. Whoever has the token runs agents on your machine: trusted networks only.
 
-Tunnels (ngrok, cloudflared) pointing at `localhost:4410` follow the same rule: set `OFFICE_TOKEN` (keep `OFFICE_HOST` on loopback) and open `https://<tunnel>/?token=<token>` once. Without a token, only localhost is accepted.
+Tunnels (ngrok, cloudflared) pointing at `localhost:4410` follow the same rule: set `OFFICE_TOKEN` (keep `OFFICE_HOST` on loopback) and open `https://<tunnel>/?token=<token>` once. Without a token, only localhost is accepted. **Settings → Access** shows the local and network addresses and the commands to copy.
 
 ## How it works
 
@@ -80,7 +80,8 @@ Tunnels (ngrok, cloudflared) pointing at `localhost:4410` follow the same rule: 
 - **Permissions**: by default agents run read and local commands (tests, builds, local git…) and edit their workspace without asking. External actions (`git push`, opening/merging PRs, publish, docker, sending messages…) always ask, and so do destructive ones (`git reset --hard`, `rm -r` outside temp folders, `kill`, SQL writes…) and edits outside the workspace, unless you "always allow" them for that employee. Requests show up in the UI (and as a "!" over the employee). Settings → Execution can make it ask for every non-read command instead.
 - **Providers**: each employee (or a whole department, in one click) uses the Claude subscription or a remote provider. Anthropic-compatible providers are called directly; OpenAI-compatible ones go through a built-in bridge. A local Ollama works too (set its context to ~64K).
 - **Conversations**: click an employee to chat. Each message continues the same Claude session; while a turn is running, your message goes in right away. Sessions you opened outside the office (terminal, IDE) can be continued as a copy.
-- **Tasks** run now, at a set time or on repeat (e.g. every 15 min). A repeating task can have a pre-check command: no output means nothing to do and no tokens spent.
+- **Notifications**: permission requests, questions and delegations become system notifications with a sound (native in the app; `osascript` on macOS and `notify-send` on Linux for the headless server), with a reminder when one waits more than 10 min. **Settings → Office → Notifications** has a test button. In a browser on another device the page plays the sound itself.
+- **Tasks** run now, at a set time or on repeat (e.g. every 15 min); a scheduled one can **Run now** (a series runs once and keeps its next time). A repeating task can have a pre-check command: no output means nothing to do and no tokens spent.
 - **Worktrees**: per employee, tasks run in the main copy or always in an isolated `git worktree`; parallel tasks use worktrees automatically.
 - **Costs** per day, department and employee (on a subscription it is the API-price equivalent, useful to compare usage).
 - **Languages**: English, Portuguese and Spanish, chosen in Settings. Agents reply in the same language.

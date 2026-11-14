@@ -10,7 +10,7 @@ import { allowedByRule, EDIT_TOOLS, isDestructive, isExternal, isInside, isReadO
 import { providerFull, publicProvider } from './providers.ts';
 import { EFFORTS, type Run, type RunContext, runByToken, startRun, summarize } from './runner.ts';
 import { nextRun } from './schedule.ts';
-import { settings } from './settings.ts';
+import { settings, updateSettings } from './settings.ts';
 import { createWorktree, releaseWorktree, removeWorktree, type Worktree, worktreeDir } from './worktree.ts';
 
 export class HttpError extends Error {
@@ -91,7 +91,9 @@ export function setDepartmentModel(id: number, b: { providerId?: number | null; 
   if (!department(id)) throw new HttpError(404, msg().departmentNotFound);
   const providerId = b.providerId == null ? null : Number(b.providerId);
   if (providerId != null && !get('SELECT 1 FROM providers WHERE id = ?', providerId)) throw new HttpError(404, msg().providerNotFound);
+  const before = all<Employee>('SELECT * FROM employees WHERE department_id = ?', id);
   const { changes } = run('UPDATE employees SET provider_id = ?, model = ? WHERE department_id = ?', providerId, b.model?.trim() || null, id);
+  for (const e of before) if (e.provider_id !== providerId) retryOnboard(e);
   pump();
   publish('state.changed');
   return { updated: Number(changes) };
@@ -141,8 +143,15 @@ export async function providerModels(b: ProviderInput) {
 
 export function deleteProvider(id: number) {
   run('DELETE FROM providers WHERE id = ?', id);
+  if (settings().defaultProviderId === id) updateSettings({ defaultProviderId: 0 });
   publish('state.changed');
 }
+
+// Provedor de quem é contratado sem escolher um (o assistente define); 0 ou removido: assinatura do Claude.
+const defaultProvider = () => {
+  const id = settings().defaultProviderId;
+  return id && get('SELECT 1 FROM providers WHERE id = ?', id) ? id : null;
+};
 
 type EmployeeInput = {
   departmentId?: number;
@@ -172,7 +181,7 @@ function insertEmployee(b: EmployeeInput, name: string, dir: string, remote: str
     name,
     dir,
     remote,
-    b.providerId ?? null,
+    b.providerId === undefined ? defaultProvider() : b.providerId,
     b.model || null,
     b.autoEdit ? 1 : 0,
     b.profile?.trim() ?? '',
@@ -244,6 +253,7 @@ export function updateEmployee(id: number, b: EmployeeInput) {
     b.connectors === undefined ? e.connectors : b.connectors ? 1 : 0,
     id,
   );
+  if (b.providerId !== undefined && b.providerId !== e.provider_id) retryOnboard(e);
   pump();
   publish('state.changed', { employeeId: id });
   return employee(id);
@@ -268,6 +278,18 @@ export function onboard(id: number) {
   if (e.kind === 'intern') throw new HttpError(400, msg().internNoProfile);
   setActivity(id, 'onboarding');
   onboarding = onboarding.then(() => runOnboard(id)).catch((e) => void publish('agent.error', { kind: 'onboard', message: String(e) }, { employeeId: id }));
+}
+
+// Onboarding que falhou (provedor fora do ar, Claude Code sem login) deixa a ficha vazia: tenta de novo quando o
+// provedor muda e quando o assistente termina, em vez de esperar a checagem diária.
+function retryOnboard(e: Employee) {
+  if (e.kind === 'repo' && !e.profile && activities.get(e.id) !== 'onboarding') onboard(e.id);
+}
+
+export function onboardPending() {
+  const pending = all<Employee>(`SELECT * FROM employees WHERE kind = 'repo' AND profile = ''`);
+  for (const e of pending) retryOnboard(e);
+  return { onboarding: pending.length };
 }
 
 // Ficha automática de repo que andou muitos commits desde o onboarding é refeita (fichas editadas à mão ficam).
@@ -664,6 +686,33 @@ export function pauseTask(id: number, paused: boolean) {
   const runAt = paused || Date.parse(t.run_at!) > Date.now() ? t.run_at : nextRunAt(t);
   run('UPDATE tasks SET status = ?, run_at = ? WHERE id = ?', status, runAt, id);
   publish('task.status', { status }, taskIds(t));
+}
+
+// "Executar agora": tarefa avulsa sai da agenda para a fila; série (mesmo pausada) ganha uma execução extra agora
+// e a agendada segue no horário dela.
+export function runNow(id: number) {
+  const t = get<Task>('SELECT * FROM tasks WHERE id = ?', id);
+  if (!t || !['scheduled', 'paused'].includes(t.status)) throw new HttpError(409, msg().cannotRunNow);
+  if (!t.repeat_every) {
+    run(`UPDATE tasks SET status = 'queued', run_at = NULL WHERE id = ?`, id);
+    publish('task.status', { status: 'queued' }, taskIds(t));
+    pump();
+    return get<Task>('SELECT * FROM tasks WHERE id = ?', id);
+  }
+  if (get(`SELECT 1 FROM tasks WHERE thread_id = ? AND status IN ('queued', 'running')`, t.thread_id)) throw new HttpError(409, msg().seriesBusy);
+  const { lastInsertRowid } = run(
+    `INSERT INTO tasks (employee_id, origin, title, body, status, repeat_every, thread_id, precheck) VALUES (?, 'user', ?, ?, 'queued', ?, ?, ?)`,
+    t.employee_id,
+    t.title,
+    t.body,
+    t.repeat_every,
+    t.thread_id,
+    t.precheck,
+  );
+  const n = get<Task>('SELECT * FROM tasks WHERE id = ?', lastInsertRowid)!;
+  publish('task.created', n, taskIds(n));
+  pump();
+  return n;
 }
 
 // Edita o que ainda não começou. Execução de série já na fila fica como está: a série segue pela próxima agendada.

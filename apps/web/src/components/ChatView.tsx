@@ -6,7 +6,7 @@ import type { Approval, Employee, OfficeEvent, Task, Thread, ThreadDetail } from
 import { ApprovalCard, QuestionCard } from './ApprovalCard';
 import { Icon, type IconName } from './icons';
 import { Markdown } from './Markdown';
-import { PauseButton } from './TasksTab';
+import { PauseButton, RunNowButton } from './TasksTab';
 import { Button, Chip, cx, Rich, Skeleton, Spinner } from './ui';
 
 type Todo = { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string };
@@ -272,6 +272,7 @@ export function ChatView({ employee }: { employee: Employee }) {
             </div>
           )}
         </div>
+        {series && <RunNowButton task={series} compact />}
         {series && <PauseButton task={series} compact />}
         {target?.kind === 'thread' && lastRun && (
           <Button variant="ghost" size="icon" icon="play" title={t.chat.watchLast} onClick={() => startReplay(lastRun.id)} />

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 process.env.OFFICE_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'office-test-'));
+// Onboarding (re)disparado pelos testes não pode abrir um claude de verdade.
+process.env.OFFICE_CLAUDE_BIN = 'false';
 const { get, run } = await import('./db.ts');
 const office = await import('./office.ts');
 
@@ -71,4 +73,34 @@ test('troca provedor e modelo do departamento inteiro', () => {
   office.setDepartmentModel(1, { providerId: null, model: '' });
   assert.equal(get<any>('SELECT COUNT(*) AS n FROM employees WHERE provider_id IS NOT NULL OR model IS NOT NULL').n, 0);
   assert.throws(() => office.setDepartmentModel(1, { providerId: 999 }), { status: 404 });
+});
+
+test('executar agora: avulsa sai da agenda; série ganha uma execução extra e mantém o horário', () => {
+  const t = office.createTask({ employeeId: 1, title: 'a', runAt: later(60) });
+  const r = office.runNow(t.id)!;
+  assert.equal(r.status, 'queued');
+  assert.equal(r.run_at, null);
+  assert.throws(() => office.runNow(t.id), { status: 409 });
+
+  const s = office.createTask({ employeeId: 1, title: 's', runAt: later(60), repeatEvery: 60 });
+  office.pauseTask(s.id, true);
+  const extra = office.runNow(s.id)!;
+  assert.equal(extra.status, 'queued');
+  assert.equal(extra.thread_id, s.thread_id);
+  assert.equal(extra.repeat_every, 60);
+  assert.equal(task(s.id).status, 'paused');
+  assert.equal(task(s.id).run_at, s.run_at);
+  // Já tem execução na fila: não empilha outra.
+  assert.throws(() => office.runNow(s.id), { status: 409 });
+});
+
+test('contratação sem provedor usa o padrão; remover o provedor volta para a assinatura', async () => {
+  const { updateSettings, settings } = await import('./settings.ts');
+  run(`INSERT INTO providers (id, name, format, base_url, model) VALUES (8, 'q', 'openai', 'http://y', 'm')`);
+  updateSettings({ defaultProviderId: 8 });
+  assert.equal(office.createEmployee({ kind: 'intern', name: 'Caio', departmentId: 1 }).provider_id, 8);
+  assert.equal(office.createEmployee({ kind: 'intern', name: 'Duda', departmentId: 1, providerId: null }).provider_id, null);
+  office.deleteProvider(8);
+  assert.equal(settings().defaultProviderId, 0);
+  assert.equal(office.createEmployee({ kind: 'intern', name: 'Eva', departmentId: 1 }).provider_id, null);
 });

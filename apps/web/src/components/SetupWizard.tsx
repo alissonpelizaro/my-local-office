@@ -1,15 +1,15 @@
-// Assistente do primeiro acesso: idioma, departamentos e contratações. Abre sozinho com o escritório vazio
-// e pode ser reaberto pela Configuração.
+// Assistente do primeiro acesso: idioma, quem faz o trabalho (assinatura do Claude ou um provedor), departamentos
+// e contratações. Abre sozinho com o escritório vazio e pode ser reaberto pela Configuração.
 import { useEffect, useState } from 'react';
 import { LANG_LABEL, LANGS } from '../i18n';
 import { act, api, openSetup, setLanguage, setTab, toast, useOffice, useT } from '../store';
 import type { Employee } from '../types';
-import { RepoImporter } from './ConfigTab';
+import { BLANK, OLLAMA, ProviderForm, RepoImporter } from './ConfigTab';
 import { Icon, type IconName } from './icons';
-import { ColorPicker, PALETTE } from './TeamDialogs';
-import { Avatar, Button, cx, Dot, Field, Input, Select, Textarea } from './ui';
+import { ColorPicker, KindCard, PALETTE } from './TeamDialogs';
+import { Avatar, Button, cx, Dot, Field, Input, Select, Spinner, Textarea } from './ui';
 
-const STEPS = ['welcome', 'departments', 'team', 'done'] as const;
+const STEPS = ['welcome', 'provider', 'departments', 'team', 'done'] as const;
 type Step = (typeof STEPS)[number];
 
 export function SetupWizard() {
@@ -25,9 +25,11 @@ export function SetupWizard() {
   }, [open]);
   if (!open) return null;
 
+  // Quem ficou sem ficha (onboarding falhou antes de haver provedor) tenta de novo agora.
   const finish = async () => {
     openSetup(false);
     setTab('office');
+    if (useOffice.getState().state.employees.some((e) => e.kind === 'repo' && !e.profile)) void act(() => api('POST', '/api/employees/onboard-pending'));
     if (!useOffice.getState().state.settings.onboardingDone) await act(() => api('PATCH', '/api/settings', { onboardingDone: true }));
   };
   const i = STEPS.indexOf(step);
@@ -40,6 +42,7 @@ export function SetupWizard() {
         <Progress index={i} onSkip={finish} />
         <div key={step} className="animate-rise p-6 sm:p-8">
           {step === 'welcome' && <Welcome onNext={() => go(1)} />}
+          {step === 'provider' && <ProviderStep onBack={() => go(-1)} onNext={() => go(1)} />}
           {step === 'departments' && <Departments onBack={() => go(-1)} onNext={() => go(1)} />}
           {step === 'team' && <Team onBack={() => go(-1)} onNext={() => go(1)} />}
           {step === 'done' && <Done onFinish={finish} />}
@@ -134,6 +137,51 @@ function Welcome({ onNext }: { onNext: () => void }) {
       <Footer>
         <Button variant="primary" icon="arrowRight" onClick={onNext}>
           {t.setup.start}
+        </Button>
+      </Footer>
+    </>
+  );
+}
+
+// Quem faz o trabalho: a assinatura do Claude (Claude Code com login) ou um provedor. Vira o padrão das contratações,
+// então o onboarding de quem for contratado no passo seguinte já roda nele.
+function ProviderStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  const t = useT();
+  const providers = useOffice((s) => s.state.providers);
+  const current = useOffice((s) => s.state.settings.defaultProviderId);
+  const models = useOffice((s) => s.models);
+  const [form, setForm] = useState<'ollama' | 'custom' | null>(null);
+  const selected = providers.some((p) => p.id === current) ? current : 0;
+  const choose = (id: number) => {
+    setForm(null);
+    if (id !== current) void act(() => api('PATCH', '/api/settings', { defaultProviderId: id }));
+  };
+  const ready = models?.models.some((m) => m.status === 'ok');
+  const claude = !models?.probedAt ? t.setup.claudeChecking : !models.cli ? t.setup.claudeMissing : ready ? t.setup.claudeReady(models.cli) : t.setup.claudeLogin(models.cli);
+
+  return (
+    <>
+      <Header icon="server" title={t.setup.providerTitle} text={t.setup.providerText} />
+      <div className="grid gap-2">
+        <KindCard on={!form && selected === 0} icon="sparkles" title={t.setup.claudeTitle} text={claude} onClick={() => choose(0)} />
+        {providers.map((p) => (
+          <KindCard key={p.id} on={!form && selected === p.id} icon="server" title={p.name} text={`${p.base_url} · ${p.model}`} onClick={() => choose(p.id)} />
+        ))}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <KindCard on={form === 'ollama'} icon="server" title={t.providers.ollama} text={t.setup.ollamaText} onClick={() => setForm('ollama')} />
+          <KindCard on={form === 'custom'} icon="globe" title={t.setup.customTitle} text={t.setup.customText} onClick={() => setForm('custom')} />
+        </div>
+      </div>
+      {form && (
+        <div className="mt-4 animate-rise rounded-2xl border border-zinc-200 p-4 dark:border-zinc-800">
+          <ProviderForm key={form} initial={form === 'ollama' ? OLLAMA : BLANK} onSaved={(p) => choose(p.id)} onCancel={() => setForm(null)} />
+        </div>
+      )}
+      <p className="mt-4 text-xs text-zinc-500">{t.setup.providerLater}</p>
+      <Footer onBack={onBack}>
+        {form && <span className="text-xs text-zinc-400">{t.setup.saveFirst}</span>}
+        <Button variant="primary" icon="arrowRight" disabled={!!form} onClick={onNext}>
+          {t.common.next}
         </Button>
       </Footer>
     </>
@@ -302,11 +350,35 @@ function InternForm({ onDone }: { onDone: () => void }) {
   );
 }
 
+// Onboarding de cada contratado, ao vivo: fazendo, pronto ou pendente (tenta de novo ao concluir).
 function Done({ onFinish }: { onFinish: () => void }) {
   const t = useT();
+  const departments = useOffice((s) => s.state.departments);
+  const hires = useOffice((s) => s.state.employees).filter((e) => e.kind === 'repo');
   return (
     <>
       <Header icon="circleCheck" title={t.setup.doneTitle} text={t.setup.doneText} />
+      {hires.length > 0 && (
+        <ul className="grid max-h-64 gap-1.5 overflow-y-auto">
+          {hires.map((e) => (
+            <li key={e.id} className="flex items-center gap-2.5 rounded-xl border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+              <Avatar name={e.name} color={departments.find((d) => d.id === e.department_id)?.color ?? '#999'} size="xs" />
+              <span className="flex-1 truncate font-medium">{e.name}</span>
+              {e.activity === 'onboarding' ? (
+                <span className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
+                  <Spinner className="h-3 w-3" /> {t.setup.onboarding}
+                </span>
+              ) : e.profile ? (
+                <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                  <Icon name="check" className="h-3.5 w-3.5" /> {t.setup.onboarded}
+                </span>
+              ) : (
+                <span className="text-xs text-amber-600 dark:text-amber-400">{t.setup.onboardPending}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       <Footer>
         <Button variant="primary" icon="building" onClick={onFinish}>
           {t.setup.go}

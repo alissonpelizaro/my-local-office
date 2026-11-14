@@ -45,12 +45,17 @@ const en = {
   precheckEmpty: 'Pre-check printed nothing: nothing to do.',
   worktreeFailed: (detail: string) => `Could not create the worktree: ${detail}`,
   updateRunning: 'An update is already running',
+  cannotRunNow: 'Only scheduled or paused tasks can run now',
+  seriesBusy: 'This series already has a run queued or running',
   // notificações
   office: 'Office',
   asksPermission: (who: string, external: boolean) => `${who} asks for permission${external ? ' (external action)' : ''}`,
   hasQuestion: (who: string) => `${who} has a question`,
   wantsToDelegate: (from: string | null, to: string) => `${from ?? 'A colleague'} wants to delegate to ${to}`,
   taskFinished: (who: string, id: number, status: string) => `${who}: task #${id} ${({ done: 'done', failed: 'failed', cancelled: 'cancelled' } as Record<string, string>)[status] ?? status}`,
+  testTitle: 'Notifications are on',
+  testBody: 'This is how the office tells you someone needs you.',
+  stillWaiting: (n: number) => (n === 1 ? '1 request is still waiting for you' : `${n} requests are still waiting for you`),
 };
 export type Messages = typeof en;
 
@@ -97,11 +102,16 @@ const pt: Messages = {
   precheckEmpty: 'Pré-checagem sem saída: nada a fazer.',
   worktreeFailed: (detail) => `Não consegui criar o worktree: ${detail}`,
   updateRunning: 'Já existe uma atualização em andamento',
+  cannotRunNow: 'Só tarefas agendadas ou pausadas podem rodar agora',
+  seriesBusy: 'Esta série já tem uma execução na fila ou rodando',
   office: 'Escritório',
   asksPermission: (who, external) => `${who} pede permissão${external ? ' (ação externa)' : ''}`,
   hasQuestion: (who) => `${who} tem uma pergunta`,
   wantsToDelegate: (from, to) => `${from ?? 'Um colega'} quer delegar a ${to}`,
   taskFinished: (who, id, status) => `${who}: tarefa #${id} ${({ done: 'concluída', failed: 'falhou', cancelled: 'cancelada' } as Record<string, string>)[status] ?? status}`,
+  testTitle: 'Notificações ligadas',
+  testBody: 'É assim que o escritório avisa quando alguém precisa de você.',
+  stillWaiting: (n) => (n === 1 ? '1 pedido ainda espera por você' : `${n} pedidos ainda esperam por você`),
 };
 
 const es: Messages = {
@@ -147,11 +157,16 @@ const es: Messages = {
   precheckEmpty: 'La verificación previa no imprimió nada: nada que hacer.',
   worktreeFailed: (detail) => `No pude crear el worktree: ${detail}`,
   updateRunning: 'Ya hay una actualización en curso',
+  cannotRunNow: 'Solo las tareas programadas o pausadas pueden ejecutarse ahora',
+  seriesBusy: 'Esta serie ya tiene una ejecución en la cola o en curso',
   office: 'Oficina',
   asksPermission: (who, external) => `${who} pide permiso${external ? ' (acción externa)' : ''}`,
   hasQuestion: (who) => `${who} tiene una pregunta`,
   wantsToDelegate: (from, to) => `${from ?? 'Un compañero'} quiere delegar a ${to}`,
   taskFinished: (who, id, status) => `${who}: tarea #${id} ${({ done: 'terminada', failed: 'falló', cancelled: 'cancelada' } as Record<string, string>)[status] ?? status}`,
+  testTitle: 'Notificaciones activadas',
+  testBody: 'Así te avisa la oficina cuando alguien te necesita.',
+  stillWaiting: (n) => (n === 1 ? '1 solicitud sigue esperándote' : `${n} solicitudes siguen esperándote`),
 };
 
 const MESSAGES: Record<Language, Messages> = { en, pt, es };

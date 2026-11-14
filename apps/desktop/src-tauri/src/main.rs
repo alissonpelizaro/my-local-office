@@ -1,8 +1,9 @@
 // App desktop: janela nativa para o server Node embutido (resources/app, mesmo layout do pacote headless).
 // Se já houver um office na porta (serviço do código-fonte, outra instância), só abre a janela nele.
+// Fechar a janela recolhe para a bandeja (o office segue rodando); "Desligar" no menu do ícone encerra tudo.
 use std::{
     env, fs,
-    io::Read,
+    io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -10,10 +11,19 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::{webview::NewWindowResponse, AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    image::Image,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    webview::NewWindowResponse,
+    AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, Wry,
+};
+use tauri_plugin_notification::NotificationExt;
 
 const ENV_START: &str = "__MLO_ENV_START__";
 const ENV_END: &str = "__MLO_ENV_END__";
+// O server sai com este código quando o "Desligar escritório" da Configuração pede: o app fecha junto.
+const QUIT_CODE: i32 = 75;
 
 fn main() {
     let home = env::var_os("MLO_HOME").map(PathBuf::from).unwrap_or_else(|| Path::new(&env::var_os("HOME").unwrap_or_default()).join(".my-local-office"));
@@ -24,27 +34,34 @@ fn main() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
+        .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("My Local Office")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(900.0, 600.0)
                 .zoom_hotkeys_enabled(true)
+                // A página sabe que está no app: quem avisa é a notificação nativa, não o som da página.
+                .initialization_script("window.mloApp = true;")
                 .on_new_window(|url, _| {
                     open_external(&url);
                     NewWindowResponse::Deny
                 })
                 .build()?;
+            let tray = tray(app.handle())?;
             let resources = app.path().resource_dir()?.join("app");
+            let handle = app.handle().clone();
             thread::spawn(move || {
                 let envs = login_env();
                 let port = envs.iter().find(|(k, _)| k == "OFFICE_PORT").and_then(|(_, v)| v.parse().ok()).unwrap_or(4410);
                 if !up(port) {
-                    thread::spawn(move || supervise(resources, home, envs, port));
+                    let h = handle.clone();
+                    thread::spawn(move || supervise(h, resources, home, envs, port));
                 }
                 for _ in 0..120 {
                     if up(port) {
                         let _ = window.navigate(Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap());
+                        thread::spawn(move || listen(handle, tray, port));
                         return;
                     }
                     thread::sleep(Duration::from_millis(500));
@@ -53,12 +70,10 @@ fn main() {
             });
             Ok(())
         })
-        .on_window_event(|_window, _event| {
-            // macOS: fechar a janela esconde (o office segue rodando); o Dock reabre e o ⌘Q encerra.
-            #[cfg(target_os = "macos")]
-            if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = _window.hide();
+                let _ = window.hide();
             }
         })
         .build(tauri::generate_context!())
@@ -80,6 +95,82 @@ fn show(app: &AppHandle) {
     }
 }
 
+// Ícone na bandeja (barra de menus no macOS): abrir a janela ou desligar o escritório.
+struct Tray {
+    open: MenuItem<Wry>,
+    quit: MenuItem<Wry>,
+}
+
+fn tray(app: &AppHandle) -> tauri::Result<Tray> {
+    let (open_label, quit_label) = labels("en");
+    let open = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+    TrayIconBuilder::with_id("main")
+        .icon(Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
+        .tooltip("My Local Office")
+        .menu(&menu)
+        .on_menu_event(|app, e| match e.id.as_ref() {
+            "open" => show(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|icon, e| {
+            if let TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } | TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+                if !cfg!(target_os = "macos") {
+                    show(icon.app_handle());
+                }
+            }
+        })
+        .build(app)?;
+    Ok(Tray { open, quit })
+}
+
+fn labels(lang: &str) -> (&'static str, &'static str) {
+    match lang {
+        "pt" => ("Abrir o escritório", "Desligar"),
+        "es" => ("Abrir la oficina", "Apagar"),
+        _ => ("Open the office", "Shut down"),
+    }
+}
+
+// Notificações do escritório (/api/notifications): nativas, com o ícone do app e som. Enquanto o app escuta, o server
+// não manda as dele. Traz também o idioma (rótulos da bandeja) e os pedidos pendentes (badge e dica do ícone).
+fn listen(app: AppHandle, tray: Tray, port: u16) {
+    loop {
+        if let Ok(mut s) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], port))) {
+            let req = format!("GET /api/notifications HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\n\r\n");
+            if s.write_all(req.as_bytes()).is_ok() {
+                for line in BufReader::new(s).lines() {
+                    let Ok(line) = line else { break };
+                    let Some(v) = line.strip_prefix("data: ").and_then(|d| serde_json::from_str::<serde_json::Value>(d).ok()) else { continue };
+                    if let Some(lang) = v["lang"].as_str() {
+                        let (open, quit) = labels(lang);
+                        let _ = tray.open.set_text(open);
+                        let _ = tray.quit.set_text(quit);
+                    }
+                    if let Some(n) = v["pending"].as_i64() {
+                        if let Some(icon) = app.tray_by_id("main") {
+                            let _ = icon.set_tooltip(Some(if n > 0 { format!("My Local Office ({n})") } else { "My Local Office".into() }));
+                        }
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.set_badge_count(if n > 0 { Some(n) } else { None });
+                        }
+                    }
+                    if let Some(title) = v["title"].as_str() {
+                        let mut b = app.notification().builder().title(title).body(v["body"].as_str().unwrap_or(""));
+                        if v["sound"].as_bool().unwrap_or(true) {
+                            b = b.sound(if cfg!(target_os = "macos") { "Glass" } else { "message-new-instant" });
+                        }
+                        let _ = b.show();
+                    }
+                }
+            }
+        }
+        thread::sleep(Duration::from_secs(3));
+    }
+}
+
 fn up(port: u16) -> bool {
     TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(300)).is_ok()
 }
@@ -92,7 +183,7 @@ fn open_external(url: &Url) {
 
 // Sobe o server e o sobe de novo se cair. Ele sai sozinho quando o app fecha: o stdin dele é um pipe deste
 // processo, e o EOF (app encerrado, morto ou atualizando) dispara o mesmo desligamento do SIGTERM.
-fn supervise(app_dir: PathBuf, home: PathBuf, envs: Vec<(String, String)>, port: u16) {
+fn supervise(app: AppHandle, app_dir: PathBuf, home: PathBuf, envs: Vec<(String, String)>, port: u16) {
     // Só o app instalado (.app ou AppImage) se atualiza sozinho: o install.sh troca este caminho.
     let app_path = if cfg!(target_os = "macos") {
         env::current_exe().ok().and_then(|e| e.ancestors().nth(3).map(Path::to_path_buf)).filter(|p| p.extension().is_some_and(|x| x == "app")).map(PathBuf::into_os_string)
@@ -120,7 +211,10 @@ fn supervise(app_dir: PathBuf, home: PathBuf, envs: Vec<(String, String)>, port:
         match cmd.spawn() {
             Ok(mut child) => {
                 let _stdin = child.stdin.take(); // wait() fecharia o stdin
-                let _ = child.wait();
+                if child.wait().ok().and_then(|s| s.code()) == Some(QUIT_CODE) {
+                    app.exit(0);
+                    return;
+                }
             }
             Err(e) => eprintln!("my-local-office: cannot start the server: {e}"),
         }
