@@ -8,8 +8,10 @@ publish = false
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2.12", features = [] }
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2.5"
+tauri-plugin-notification = "2"
+serde_json = "1"
 
 [profile.release]
 lto = true

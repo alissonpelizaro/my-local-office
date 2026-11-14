@@ -110,7 +110,12 @@ export type Settings = {
   autoAllowReadOnly: boolean;
   onlyAskExternal: boolean;
   profileRefreshCommits: number;
+  defaultProviderId: number; // 0: assinatura do Claude
+  notifySound: boolean;
 };
+
+// GET /api/system: endereços para abrir de fora e por onde saem as notificações.
+export type SystemInfo = { port: number; host: string; lan: boolean; tokenSet: boolean; local: string; network: string[]; notifier: 'app' | 'macos' | 'linux' | 'none'; app: boolean };
 
 export type Costs = {
   days: number;

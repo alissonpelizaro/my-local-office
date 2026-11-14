@@ -113,6 +113,10 @@ function Header() {
   const pending = useOffice((s) => s.state.approvals.length);
   const running = useOffice((s) => s.state.tasks.filter((t) => t.status === 'running').length);
   const update = useOffice((s) => (s.state.app.available && !s.state.app.updating ? s.state.app.latest : null));
+  // Pedidos esperando aparecem na aba do navegador (e na barra de janelas), mesmo com o escritório em segundo plano.
+  useEffect(() => {
+    document.title = pending ? `(${pending}) My Local Office` : 'My Local Office';
+  }, [pending]);
 
   return (
     <header className="flex items-center gap-3 border-b border-zinc-200/80 bg-white/80 px-3 py-2 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80">

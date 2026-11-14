@@ -6,8 +6,8 @@ import { tr } from '../store';
 import type { Activity, OfficeEvent, OfficeState } from '../types';
 import * as D from './draw';
 import { iconKey, loadIcons } from './icons';
-import { computeFloorplan, type Floorplan, iso, type LeisureSpot, type Pt, type Room, place, route, type Seg, WALL, WALL_CUT } from './layout';
-import { type Item, LEISURE } from './rooms';
+import { computeFloorplan, type Floorplan, iso, type LeisureSpot, type Pt, type Room, route, type Seg, WALL, WALL_CUT } from './layout';
+import { BOSS_FILL, DEPT_FILL, GARDEN, type Item, LEISURE } from './rooms';
 
 const { pt, mix, darken } = D;
 
@@ -113,7 +113,8 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   preload() {
-    const spots = LEISURE.flatMap((b) => b.spots.map((s) => s.icon));
+    const modules = [...LEISURE, GARDEN].flatMap((b) => b.fill).concat(DEPT_FILL, BOSS_FILL);
+    const spots = [...LEISURE, GARDEN].flatMap((b) => b.spots).concat(modules.flatMap((m) => m.spots ?? [])).map((s) => s.icon);
     loadIcons(this, [...Object.values(ACTIVITY_ICON), ...spots, ...FLOATS, 'question', 'file', 'message', 'briefcase']);
   }
 
@@ -273,14 +274,28 @@ export class OfficeScene extends Phaser.Scene {
       }
     });
     for (const s of hallSegs) this.wall(s);
-    // Vasos só na borda de cima de cada corredor, longe das portas das salas de cima.
+    // Na borda de cima de cada corredor, encostados nas salas e longe das portas: vaso, máquina de lanches,
+    // banco, bebedouro, lixeira, em ciclo. Cada um dentro de um tile só: o trecho de parede da frente ordena pelo
+    // meio do tile, e o que invadisse o tile seguinte ficaria atrás dele.
     for (const h of halls) {
-      const doors = rooms.filter((r) => r.row === 0 && r.hall.gy > h.gy && r.hall.gy < h.gy + h.d).map((r) => r.doorGx + 0.5);
-      const gy = h.gy + 0.3;
-      for (let px = 2.5; px < h.w - 0.5; px += 5) {
-        if (doors.some((d) => Math.abs(d - px) < 1.4)) continue;
-        this.furniture(px, gy, (g) => D.plant(g, px, gy, 0.9, hash(`hall${h.gy}:${px}`)));
+      const doors = rooms.filter((r) => r.door.wall === 'R' && r.door.at === h.gy).map((r) => r.door.u + 0.5);
+      let n = hash(`hall${h.gy}`) % 5;
+      for (let px = 2.5; px < h.w - 1; px += 4) {
+        if (doors.some((d) => Math.abs(d - px) < 1.6)) continue;
+        const seed = hash(`hall${h.gy}:${px}`);
+        const kind = n++ % 5;
+        if (kind === 0) this.furniture(px, h.gy + 0.3, (g) => D.plant(g, px, h.gy + 0.3, 0.9, seed));
+        else if (kind === 1) this.furniture(px, h.gy + 0.4, (g) => D.vending(g, px - 0.45, h.gy + 0.05, seed));
+        else if (kind === 2) this.furniture(px, h.gy + 0.3, (g) => D.bench(g, px - 0.45, h.gy + 0.08, 0.9, 0.45));
+        else if (kind === 3) this.furniture(px, h.gy + 0.28, (g) => D.cooler(g, px - 0.22, h.gy + 0.06));
+        else this.furniture(px, h.gy + 0.3, (g) => (D.plant(g, px - 0.35, h.gy + 0.3, 0.8, seed), D.bin(g, px + 0.3, h.gy + 0.25)));
       }
+    }
+    // Fim da espinha nos fundos (antes do primeiro corredor): canto do café.
+    const s = this.plan!.spine;
+    if (halls[0]?.gy > 1) {
+      this.furniture(s.gx + 0.5, 0.45, (g) => D.plant(g, s.gx + 0.5, 0.45, 1.1, 3));
+      this.furniture(s.gx + 1.45, 0.3, (g) => D.cooler(g, s.gx + 1.25, 0.08));
     }
   }
 
@@ -302,19 +317,21 @@ export class OfficeScene extends Phaser.Scene {
     if (r.walls) for (const s of r.segs) this.wall(s);
     else this.drawHedges(r);
 
-    // Placa sobre a porta, do lado do corredor: não cobre os nomes de quem está na sala de trás.
-    const sign = pt(r.door.gx, r.row === 0 ? r.gy + r.d : r.gy, r.walls ? WALL_CUT : 10);
+    // Placa sobre a porta, na linha da parede: não cobre os nomes de quem está na sala de trás.
+    const { door, inside } = r;
+    const line = door.wall === 'R' ? { gx: door.u + 0.5, gy: door.at } : { gx: door.at, gy: door.u + 0.5 };
+    const sign = pt(line.gx, line.gy, r.walls ? WALL_CUT : 10);
     this.keep(
       this.add
         .text(sign.x, sign.y, r.kind === 'dept' ? r.name : (tr().office.rooms[r.id] ?? r.name), { fontFamily: FONT, fontSize: '12px', fontStyle: 'bold', color: '#ffffff', backgroundColor: r.color, padding: { x: 6, y: 2 }, resolution: 2 })
         .setOrigin(0.5, 0.5)
         .setDepth(LABEL_DEPTH),
     );
-    if (r.walls) this.graphics(FLOOR_DEPTH + 2, (g) => D.doormat(g, r.door.gx, r.row === 0 ? r.gy + r.d - 0.25 : r.gy + 0.25));
+    if (r.walls) this.graphics(FLOOR_DEPTH + 2, (g) => D.doormat(g, (line.gx + inside.gx) / 2, (line.gy + inside.gy) / 2));
 
     if (r.kind === 'dept') this.decorateDept(r);
     if (r.kind === 'boss') this.drawBoss(r);
-    for (const item of r.blueprint?.items ?? []) this.drawItem(r, item);
+    for (const item of r.items) this.drawItem(r, item);
   }
 
   // Paredes em trechos de 1 tile, para ordenar com quem passa. Fundo: profundidade pelo ponto mais ao fundo,
@@ -348,24 +365,18 @@ export class OfficeScene extends Phaser.Scene {
     }
   }
 
-  // Cerca viva: os lados do fundo se comportam como parede (atrás de tudo da sala); os da frente, como móvel.
+  // Cerca viva nos trechos que não encostam no prédio (layout): os do fundo se comportam como parede
+  // (atrás de tudo da sala); os da frente, como móvel.
   private drawHedges(r: Room) {
-    const back = (gx: number, gy: number, w: number, d: number) => this.graphics(iso(gx, gy).y + 0.5, (g) => D.hedge(g, gx, gy, w, d, 14));
-    const front = (gx: number, gy: number, w: number, d: number) => this.furniture(gx + w / 2, gy + d / 2, (g) => D.hedge(g, gx, gy, w, d, 8));
-    for (let y = 0; y < r.d; y++) back(r.gx, r.gy + y, 0.25, 1);
-    for (let x = 0; x < r.w; x++) {
-      if (r.gx + x !== r.doorGx || r.row === 0) back(r.gx + x, r.gy, 1, 0.25);
-      if (r.gx + x !== r.doorGx || r.row === 1) front(r.gx + x, r.gy + r.d - 0.25, 1, 0.25);
+    for (const { wall, at, u, front } of r.segs) {
+      const [gx, gy, w, d] = wall === 'L' ? [front ? at - 0.25 : at, u, 0.25, 1] : [u, front ? at - 0.25 : at, 1, 0.25];
+      if (front) this.furniture(gx + w / 2, gy + d / 2, (g) => D.hedge(g, gx, gy, w, d, 8));
+      else this.graphics(iso(gx, gy).y + 0.5, (g) => D.hedge(g, gx, gy, w, d, 14));
     }
-    for (let y = 0; y < r.d; y++) front(r.gx + r.w - 0.25, r.gy + y, 0.25, 1);
   }
 
   private decorateDept(r: Room) {
     const seed = hash(r.id);
-    this.furniture(r.gx + 0.35, r.gy + 0.35, (g) => D.plant(g, r.gx + 0.35, r.gy + 0.35, 1.2, seed));
-    this.furniture(r.gx + r.w - 0.45, r.gy + 0.35, (g) => D.plant(g, r.gx + r.w - 0.45, r.gy + 0.35, 1, seed + 1));
-    this.furniture(r.gx + r.w - 0.4, r.gy + r.d - 0.4, (g) => D.plant(g, r.gx + r.w - 0.4, r.gy + r.d - 0.4, 1.3, seed + 2));
-    this.furniture(r.gx + 0.42, r.gy + r.d - 0.55, (g) => D.cooler(g, r.gx + 0.2, r.gy + r.d - 0.78));
     for (let y = 1; y < r.d - 0.5; y += 3) this.wallItem(r, 'L', y, (g, at, u) => D.windowPane(g, 'L', at, u), 600_000);
     this.wallItem(r, 'R', 2, (g, at, u) => D.whiteboard(g, 'R', at, u, seed));
     if (r.w >= 8) this.wallItem(r, 'R', 5, (g, at, u) => D.clock(g, 'R', at, u), 30_000);
@@ -400,8 +411,9 @@ export class OfficeScene extends Phaser.Scene {
     this.pile = { g, badge, count, desk };
   }
 
+  // Móvel em coordenadas absolutas (o layout já resolveu âncoras e módulos).
   private drawItem(r: Room, it: Item) {
-    const { gx: x, gy: y } = place(r, it);
+    const { x, y } = it;
     const w = it.w ?? 1;
     const d = it.d ?? 1;
     const seed = hash(`${r.id}${it.t}${it.x}${it.y}`);
@@ -410,7 +422,37 @@ export class OfficeScene extends Phaser.Scene {
       case 'rug':
         return this.graphics(FLOOR_DEPTH + 2, (g) => D.rug(g, x, y, w, d, it.c ?? 0x991b1b));
       case 'path':
-        return this.graphics(FLOOR_DEPTH + 2, (g) => D.stonePath(g, x, r.gy, r.gy + r.d, seed));
+        return this.graphics(FLOOR_DEPTH + 2, (g) => D.stonePath(g, x, y, x + (it.w ?? 0), y + (it.d ?? 0), seed));
+      case 'promenade':
+        return this.graphics(FLOOR_DEPTH + 2, (g) => D.stonePath(g, x + w / 2, y, x + w / 2, y + d, seed));
+      case 'sofa':
+        return at(x + w / 2, y + d / 2, (g) => D.sofa(g, x, y, w, d, it.c ?? 0x475569));
+      case 'coffeeTable':
+        return at(x + w / 2, y + d / 2, (g) => D.coffeeTable(g, x, y, w, d, seed));
+      case 'vending':
+        return at(x + 0.45, y + 0.35, (g) => D.vending(g, x, y, seed));
+      case 'bin':
+        return at(x, y, (g) => D.bin(g, x, y));
+      case 'printer':
+        return at(x + 0.45, y + 0.3, (g) => D.printer(g, x, y));
+      case 'cabinet':
+        return at(x + 0.25, y + 0.25, (g) => D.cabinet(g, x, y));
+      case 'lowShelf':
+        return at(x + w / 2, y + d / 2, (g) => D.bookshelf(g, x, y, w, d, it.face ?? 'gy', seed, 26));
+      case 'coatRack':
+        return at(x, y, (g) => D.coatRack(g, x, y, seed));
+      case 'foosball':
+        return at(x + w / 2, y + d / 2, (g) => D.foosball(g, x, y, w, d));
+      case 'pool':
+        return at(x + w / 2, y + d / 2, (g) => D.pool(g, x, y, w, d, seed));
+      case 'table':
+        return at(x + w / 2, y + d / 2, (g) => D.table(g, x, y, w, d, seed));
+      case 'picnic':
+        return at(x + w / 2, y + d / 2, (g) => D.picnic(g, x, y, w, d));
+      case 'bush':
+        return at(x, y, (g) => D.bush(g, x, y, seed));
+      case 'lampPost':
+        return at(x, y, (g) => D.lampPost(g, x, y));
       case 'counter':
         this.steamAt = pt(x + 0.5, y + 0.25, 40);
         return at(x + w / 2, y + d / 2, (g) => D.counter(g, x, y, w, d));
@@ -423,13 +465,13 @@ export class OfficeScene extends Phaser.Scene {
       case 'stool':
         return at(x, y, (g) => D.stool(g, x, y));
       case 'plant':
-        return at(x, y, (g) => D.plant(g, x, y, 1.2, seed));
+        return at(x, y, (g) => D.plant(g, x, y, it.s ?? 1.2, seed));
       case 'beanbag':
         return at(x, y, (g) => D.beanbag(g, x, y, it.c ?? 0xef4444));
       case 'pingpong':
         return at(x + w / 2, y + d / 2, (g) => D.pingpong(g, x, y, w, d));
       case 'bench':
-        return at(x + w / 2, y + d / 2, (g) => D.bench(g, x, y, w, d));
+        return at(x + w / 2, y + d / 2, (g) => D.bench(g, x, y, w, d, it.flip));
       case 'armchair':
         return at(x + 0.4, y + 0.4, (g) => D.armchair(g, x, y, it.c ?? 0x047857));
       case 'sideTable':

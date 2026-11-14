@@ -1,16 +1,17 @@
 import fs from 'node:fs';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { countTokens, proxyMessages } from './bridge.js';
 import { eventsAfter, eventsOfTask, subscribe } from './bus.ts';
 import * as chat from './chat.ts';
 import { access, SESSION_COOKIE } from './access.ts';
-import { HOST, PORT } from './config.ts';
+import { HOST, PORT, TOKEN } from './config.ts';
 import { get, type Provider } from './db.ts';
 import { discover, importRepos } from './importer.ts';
 import { handleMcp } from './mcp.ts';
 import { models, refreshModels } from './models.ts';
-import { startNotifications } from './notify.ts';
+import { notificationStream, notifier, startNotifications, testNotification } from './notify.ts';
 import * as office from './office.ts';
 import { stopAll } from './runner.ts';
 import { settings, updateSettings } from './settings.ts';
@@ -90,6 +91,32 @@ async function bridge(req: IncomingMessage, res: ServerResponse, providerId: num
   await proxyMessages(body, res, { baseUrl: p.base_url, apiKey: p.api_key });
 }
 
+// Endereços para abrir de outro aparelho ou por túnel. Ligado só no loopback, os da rede não respondem (a UI explica).
+function system() {
+  const lan = !['127.0.0.1', '::1', 'localhost'].includes(HOST);
+  const ips = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i) => i?.family === 'IPv4' && !i.internal)
+    .map((i) => i!.address);
+  return {
+    port: PORT,
+    host: HOST,
+    lan,
+    tokenSet: TOKEN.length >= 16,
+    local: `http://127.0.0.1:${PORT}`,
+    network: (lan && HOST !== '0.0.0.0' ? [HOST] : ips).map((ip) => `http://${ip}:${PORT}`),
+    notifier: notifier(),
+    app: Boolean(process.env.MLO_APP),
+  };
+}
+
+// No app desktop, sair com 75 avisa o supervisor (main.rs) que foi pedido: ele fecha o app em vez de subir de novo.
+const QUIT_CODE = 75;
+function quit() {
+  if (!process.env.MLO_APP) throw new office.HttpError(409, 'only the desktop app can be shut down from here');
+  setTimeout(() => shutdown(QUIT_CODE), 200);
+}
+
 type Handler = (body: any, params: string[], url: URL) => unknown;
 const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/state$/, () => ({ ...office.state(), app: updateInfo() })],
@@ -108,6 +135,7 @@ const routes: [string, RegExp, Handler][] = [
   ['PATCH', /^\/api\/employees\/(\d+)$/, (b, [id]) => office.updateEmployee(Number(id), b)],
   ['DELETE', /^\/api\/employees\/(\d+)$/, (_, [id]) => office.deleteEmployee(Number(id))],
   ['POST', /^\/api\/employees\/(\d+)\/onboard$/, (_, [id]) => office.onboard(Number(id))],
+  ['POST', /^\/api\/employees\/onboard-pending$/, () => office.onboardPending()],
   ['GET', /^\/api\/employees\/(\d+)\/threads$/, (_, [id]) => chat.threads(Number(id))],
   ['POST', /^\/api\/employees\/(\d+)\/threads$/, (b, [id]) => chat.startThread(Number(id), b.text, b.resumeSessionId)],
   ['GET', /^\/api\/employees\/(\d+)\/sessions$/, (_, [id]) => chat.nativeSessions(Number(id))],
@@ -121,12 +149,16 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/tasks\/(\d+)\/message$/, (b, [id]) => office.messageTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/followup$/, (b, [id]) => office.followupTask(Number(id), b.text)],
   ['POST', /^\/api\/tasks\/(\d+)\/stop$/, (_, [id]) => office.stopTask(Number(id))],
+  ['POST', /^\/api\/tasks\/(\d+)\/run$/, (_, [id]) => office.runNow(Number(id))],
   ['POST', /^\/api\/tasks\/(\d+)\/(pause|resume)$/, (_, [id, action]) => office.pauseTask(Number(id), action === 'pause')],
   ['DELETE', /^\/api\/tasks\/(\d+)\/worktree$/, (_, [id]) => office.removeTaskWorktree(Number(id))],
   ['GET', /^\/api\/costs$/, (_, __, url) => office.costs(Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30)))],
   ['POST', /^\/api\/approvals\/(\d+)$/, (b, [id]) => office.resolveApproval(Number(id), b.decision, b.text, b.answers)],
   ['POST', /^\/api\/update\/check$/, () => checkUpdate()],
   ['POST', /^\/api\/update$/, () => startUpdate()],
+  ['GET', /^\/api\/system$/, () => system()],
+  ['POST', /^\/api\/notify\/test$/, () => testNotification()],
+  ['POST', /^\/api\/app\/quit$/, () => quit()],
 ];
 
 const server = http.createServer(async (req, res) => {
@@ -144,6 +176,7 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
   try {
     if (req.method === 'GET' && p === '/api/events') return streamEvents(req, res, url);
+    if (req.method === 'GET' && p === '/api/notifications') return notificationStream(req, res);
     if (p === '/mcp') return req.method === 'POST' ? await handleMcp(req, res, await readJson(req, 16e6)) : send(res, 405, { error: 'use POST' });
     const b = req.method === 'POST' && p.match(/^\/bridge\/(\d+)\/v1\/messages(\/count_tokens)?$/);
     if (b) return await bridge(req, res, Number(b[1]), Boolean(b[2]));
@@ -176,11 +209,11 @@ setTimeout(checkUpdate, 10_000).unref();
 setInterval(checkUpdate, 6 * 3_600_000).unref();
 
 // Processos `claude` filhos não sobrevivem ao server: sem o MCP dele, ficariam rodando às cegas.
-const shutdown = () => {
+function shutdown(code = 0) {
   stopAll();
   server.close();
-  setTimeout(() => process.exit(0), 500).unref();
-};
-for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, shutdown);
+  setTimeout(() => process.exit(code), 500).unref();
+}
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => shutdown());
 // No app desktop o stdin é um pipe do app: EOF = app fechado (ou morto), o server vai junto.
-if (process.env.MLO_APP) process.stdin.on('end', shutdown).resume();
+if (process.env.MLO_APP) process.stdin.on('end', () => shutdown()).resume();

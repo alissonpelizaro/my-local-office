@@ -27,7 +27,7 @@ function DialogShell({ open, onClose, title, icon, children }: { open: boolean; 
 }
 
 // Escolha entre dois tipos, com descrição: mais claro que um segmentado para quem contrata pela primeira vez.
-function KindCard({ on, icon, title, text, onClick }: { on: boolean; icon: IconName; title: string; text: string; onClick: () => void }) {
+export function KindCard({ on, icon, title, text, onClick }: { on: boolean; icon: IconName; title: string; text: string; onClick: () => void }) {
   return (
     <button
       type="button"

@@ -20,6 +20,8 @@ const DEFAULTS = {
   autoAllowReadOnly: true, // comandos de shell só de leitura (ls, cat, grep, git log…) não pedem permissão
   onlyAskExternal: true, // só pede permissão para ação externa (push, PR, publish…), destrutiva (reset --hard, rm -r, kill…) e edição fora da pasta de trabalho
   profileRefreshCommits: 40, // ficha automática é refeita quando o repo andou isso de commits; 0 desliga
+  defaultProviderId: 0, // provedor de quem é contratado sem escolher; 0: assinatura do Claude
+  notifySound: true, // som junto da notificação do sistema
 };
 export type Settings = typeof DEFAULTS;
 

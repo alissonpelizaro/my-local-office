@@ -211,6 +211,26 @@ export function desk(g: G, gx: number, gy: number, wood: number, seed: number) {
     g.fillCircle(leaf.x, leaf.y, 4);
   }
   if (r() < 0.5) for (let i = 0; i < 3; i++) quad(g, rect(gx + 1.1 + i * 0.02, gy + 0.42 - i * 0.02, 0.3, 0.3, 14.6 + i), 0xf8fafc);
+  // Luminária ou fone de ouvido em parte das mesas.
+  const extra = r();
+  if (extra < 0.3) {
+    disc(g, gx + 0.15, gy + 0.2, 0.08, 0x1f2937, 1, 14);
+    const a = pt(gx + 0.15, gy + 0.2, 14);
+    const b = pt(gx + 0.2, gy + 0.25, 30);
+    g.lineStyle(1.5, 0x1f2937, 1);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+    g.fillStyle(0xfbbf24, 1);
+    g.fillTriangle(b.x - 4, b.y + 3, b.x + 4, b.y + 3, b.x, b.y - 3);
+  } else if (extra < 0.5) {
+    const c = pt(gx + 0.3, gy + 0.3, 15.5);
+    g.lineStyle(2, 0x111827, 1);
+    g.beginPath();
+    g.arc(c.x, c.y, 4, Math.PI, 0);
+    g.strokePath();
+    g.fillStyle(0x111827, 1);
+    g.fillCircle(c.x - 4, c.y + 0.5, 1.8);
+    g.fillCircle(c.x + 4, c.y + 0.5, 1.8);
+  }
 }
 
 // Monitor com a tela voltada para a cadeira (+gy). Ligado, mostra "código".
@@ -262,16 +282,15 @@ export function treeLocal(g: G, seed: number) {
   }
 }
 
-export function bookshelf(g: G, gx: number, gy: number, w: number, d: number, face: 'gx' | 'gy', seed: number) {
+export function bookshelf(g: G, gx: number, gy: number, w: number, d: number, face: 'gx' | 'gy', seed: number, h = 50) {
   const r = rng(seed);
-  const h = 50;
   shadow(g, gx, gy, w, d);
   box(g, gx, gy, w, d, h, 0x6b3f1d);
   const span = face === 'gy' ? w : d;
   const at = face === 'gy' ? gy + d : gx + w;
   const base = face === 'gy' ? gx : gy;
   const wall: Wall = face === 'gy' ? 'R' : 'L';
-  for (let shelf = 0; shelf < 4; shelf++) {
+  for (let shelf = 0; shelf < Math.floor((h - 4) / 11.5); shelf++) {
     const z0 = 4 + shelf * 11.5;
     wallRect(g, wall, at, base + 0.05, base + span - 0.05, z0 - 1.5, z0, 0x4a2a12);
     for (let u = base + 0.08; u < base + span - 0.1; ) {
@@ -384,12 +403,182 @@ export function fountain(g: G, gx: number, gy: number) {
   disc(g, gx, gy, 0.22, 0x7dd3fc, 1, 30);
 }
 
-export function bench(g: G, gx: number, gy: number, w: number, d: number) {
+// Encosto no lado de trás (-gx/-gy); flip põe no lado da frente, para sentar de costas para a câmera.
+export function bench(g: G, gx: number, gy: number, w: number, d: number, flip = false) {
   shadow(g, gx, gy, w, d);
   for (const [lx, ly] of [[0.05, 0.1], [w - 0.15, 0.1], [0.05, d - 0.2], [w - 0.15, d - 0.2]]) box(g, gx + lx, gy + ly, 0.1, 0.1, 8, 0x374151);
   box(g, gx, gy, w, d, 3, 0xa16207, 8);
-  if (w < d) box(g, gx, gy, 0.1, d, 12, 0x854d0e, 11);
-  else box(g, gx, gy, w, 0.1, 12, 0x854d0e, 11);
+  if (w < d) box(g, flip ? gx + w - 0.1 : gx, gy, 0.1, d, 12, 0x854d0e, 11);
+  else box(g, gx, flip ? gy + d - 0.1 : gy, w, 0.1, 12, 0x854d0e, 11);
+}
+
+export function sofa(g: G, gx: number, gy: number, w: number, d: number, c: number) {
+  shadow(g, gx, gy, w, d);
+  box(g, gx, gy, w, 0.22, 21, darken(c, 0.12));
+  box(g, gx, gy + 0.22, w, d - 0.22, 9, c);
+  for (let i = 1; i < 3; i++) {
+    const a = pt(gx + (w * i) / 3, gy + 0.25, 9.2);
+    const b = pt(gx + (w * i) / 3, gy + d, 9.2);
+    g.lineStyle(1, darken(c, 0.25), 0.7);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+  box(g, gx, gy + 0.22, 0.18, d - 0.22, 14, darken(c, 0.05));
+  box(g, gx + w - 0.18, gy + 0.22, 0.18, d - 0.22, 14, darken(c, 0.05));
+}
+
+export function coffeeTable(g: G, gx: number, gy: number, w: number, d: number, seed: number) {
+  const r = rng(seed);
+  shadow(g, gx, gy, w, d, 0.14);
+  box(g, gx, gy, w, d, 7, 0x57534e);
+  quad(g, rect(gx + 0.05, gy + 0.05, w - 0.1, d - 0.1, 7.2), 0x78716c);
+  cylinder(g, gx + w * (0.25 + r() * 0.5), gy + d / 2, 0.06, 4, pick(r, [0xffffff, 0xfacc15, 0x60a5fa]), 7);
+  if (r() < 0.6) box(g, gx + 0.15, gy + 0.08, 0.3, 0.22, 1.5, pick(r, [0xdc2626, 0x2563eb, 0x16a34a]), 7.2);
+}
+
+// Máquina de lanches com a vitrine para +gy.
+export function vending(g: G, gx: number, gy: number, seed: number) {
+  const r = rng(seed);
+  const body = pick(r, [0xdc2626, 0x1d4ed8, 0x0f766e]);
+  shadow(g, gx, gy, 0.9, 0.7);
+  box(g, gx, gy, 0.9, 0.7, 46, body);
+  wallRect(g, 'R', gy + 0.7, gx + 0.08, gx + 0.62, 14, 42, 0x0b1220);
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 3; col++) {
+      const p = pt(gx + 0.17 + col * 0.17, gy + 0.7, 18 + row * 6.5);
+      g.fillStyle(pick(r, [0xfacc15, 0xf97316, 0x22c55e, 0xec4899, 0x38bdf8, 0xffffff]), 1);
+      g.fillRect(p.x - 1.6, p.y - 2.2, 3.2, 3.6);
+    }
+  }
+  wallRect(g, 'R', gy + 0.7, gx + 0.67, gx + 0.82, 26, 36, lighten(body, 0.4));
+  wallRect(g, 'R', gy + 0.7, gx + 0.12, gx + 0.58, 4, 9, 0x111827);
+}
+
+export function bin(g: G, gx: number, gy: number) {
+  disc(g, gx, gy + 0.04, 0.15, 0x000000, 0.15);
+  cylinder(g, gx, gy, 0.13, 8, 0x6b7280);
+  disc(g, gx, gy, 0.1, 0x374151, 1, 8.1);
+}
+
+export function printer(g: G, gx: number, gy: number) {
+  shadow(g, gx, gy, 0.9, 0.6);
+  box(g, gx, gy, 0.9, 0.6, 12, 0x374151);
+  box(g, gx + 0.05, gy + 0.05, 0.8, 0.5, 8, 0xe5e7eb, 12);
+  quad(g, rect(gx + 0.2, gy + 0.12, 0.45, 0.3, 20.2), 0x9ca3af);
+  quad(g, rect(gx + 0.25, gy + 0.42, 0.35, 0.22, 16), 0xffffff);
+  const led = pt(gx + 0.75, gy + 0.55, 17);
+  g.fillStyle(0x22c55e, 1);
+  g.fillCircle(led.x, led.y, 1.2);
+}
+
+// Arquivo de gavetas.
+export function cabinet(g: G, gx: number, gy: number, w = 0.5, d = 0.5) {
+  shadow(g, gx, gy, w, d);
+  box(g, gx, gy, w, d, 22, 0x9ca3af);
+  for (const z of [7.5, 15]) wallRect(g, 'R', gy + d, gx + 0.05, gx + w - 0.05, z - 0.6, z, 0x6b7280);
+  for (const z of [4, 11.5, 19]) wallRect(g, 'R', gy + d, gx + w / 2 - 0.07, gx + w / 2 + 0.07, z - 1, z, 0x374151);
+}
+
+export function coatRack(g: G, gx: number, gy: number, seed: number) {
+  const r = rng(seed);
+  disc(g, gx, gy, 0.18, 0x000000, 0.18);
+  disc(g, gx, gy, 0.14, 0x44403c, 1, 1);
+  const a = pt(gx, gy);
+  const b = pt(gx, gy, 40);
+  g.lineStyle(2, 0x44403c, 1);
+  g.lineBetween(a.x, a.y, b.x, b.y);
+  g.fillStyle(pick(r, [0x1e3a8a, 0x7f1d1d, 0x365314, 0x78350f]), 1);
+  g.fillRoundedRect(b.x - 5, b.y + 3, 7, 16, 3);
+  g.fillStyle(0x44403c, 1);
+  g.fillCircle(b.x, b.y, 2);
+}
+
+export function foosball(g: G, gx: number, gy: number, w: number, d: number) {
+  shadow(g, gx, gy, w, d);
+  for (const [lx, ly] of [[0.1, 0.1], [w - 0.2, 0.1], [0.1, d - 0.2], [w - 0.2, d - 0.2]]) box(g, gx + lx, gy + ly, 0.1, 0.1, 12, 0x1f2937);
+  box(g, gx, gy, w, d, 5, 0x78350f, 12);
+  quad(g, rect(gx + 0.08, gy + 0.08, w - 0.16, d - 0.16, 17.2), 0x15803d);
+  const m1 = pt(gx + w / 2, gy + 0.08, 17.3);
+  const m2 = pt(gx + w / 2, gy + d - 0.08, 17.3);
+  g.lineStyle(1, 0xffffff, 0.8);
+  g.lineBetween(m1.x, m1.y, m2.x, m2.y);
+  for (let i = 1; i <= 4; i++) {
+    const x = gx + (w * i) / 5;
+    const a = pt(x, gy - 0.12, 20);
+    const b = pt(x, gy + d + 0.12, 20);
+    g.lineStyle(1.4, 0xd1d5db, 1);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+    for (let j = 1; j <= 2; j++) {
+      const p = pt(x, gy + (d * j) / 3, 19);
+      g.fillStyle(i % 2 ? 0xdc2626 : 0x2563eb, 1);
+      g.fillCircle(p.x, p.y, 1.8);
+    }
+  }
+}
+
+export function pool(g: G, gx: number, gy: number, w: number, d: number, seed: number) {
+  const r = rng(seed);
+  shadow(g, gx, gy, w, d);
+  for (const [lx, ly] of [[0.15, 0.15], [w - 0.3, 0.15], [0.15, d - 0.3], [w - 0.3, d - 0.3]]) box(g, gx + lx, gy + ly, 0.15, 0.15, 11, 0x451a03);
+  box(g, gx, gy, w, d, 5, 0x78350f, 11);
+  quad(g, rect(gx + 0.12, gy + 0.12, w - 0.24, d - 0.24, 16.2), 0x166534);
+  for (const [px, py] of [[0.15, 0.15], [w / 2, 0.12], [w - 0.15, 0.15], [0.15, d - 0.15], [w / 2, d - 0.12], [w - 0.15, d - 0.15]]) disc(g, gx + px, gy + py, 0.07, 0x0a0a0a, 1, 16.3);
+  for (let i = 0; i < 6; i++) disc(g, gx + 0.4 + r() * (w - 0.8), gy + 0.35 + r() * (d - 0.7), 0.045, pick(r, [0xffffff, 0xfacc15, 0xdc2626, 0x2563eb, 0x111827]), 1, 16.6);
+  const a = pt(gx + 0.5, gy + d * 0.7, 17);
+  const b = pt(gx + w * 0.55, gy + d * 0.3, 17);
+  g.lineStyle(1.5, 0xd6a35c, 1);
+  g.lineBetween(a.x, a.y, b.x, b.y);
+}
+
+export function table(g: G, gx: number, gy: number, w: number, d: number, seed: number) {
+  const r = rng(seed);
+  shadow(g, gx, gy, w, d);
+  for (const [lx, ly] of [[0.05, 0.05], [w - 0.13, 0.05], [0.05, d - 0.13], [w - 0.13, d - 0.13]]) box(g, gx + lx, gy + ly, 0.08, 0.08, 13, 0x44403c);
+  box(g, gx, gy, w, d, 2, 0xa16207, 13);
+  box(g, gx + 0.3, gy + 0.25, 0.4, 0.3, 2, pick(r, [0xdc2626, 0x1d4ed8, 0x15803d]), 15);
+  quad(g, rect(gx + w - 0.8, gy + 0.3, 0.45, 0.3, 15.1), 0xf8fafc);
+}
+
+export function picnic(g: G, gx: number, gy: number, w: number, d: number) {
+  shadow(g, gx, gy - 0.3, w, d + 0.6);
+  box(g, gx + 0.1, gy - 0.35, w - 0.2, 0.25, 7, 0x92400e);
+  box(g, gx + 0.2, gy + 0.3, 0.12, d - 0.6, 12, 0x78350f);
+  box(g, gx + w - 0.32, gy + 0.3, 0.12, d - 0.6, 12, 0x78350f);
+  box(g, gx, gy, w, d, 2, 0xb45309, 12);
+  for (let i = 1; i < 4; i++) {
+    const a = pt(gx, gy + (d * i) / 4, 14.1);
+    const b = pt(gx + w, gy + (d * i) / 4, 14.1);
+    g.lineStyle(1, 0x78350f, 0.8);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+  box(g, gx + 0.1, gy + d + 0.1, w - 0.2, 0.25, 7, 0x92400e);
+}
+
+export function bush(g: G, gx: number, gy: number, seed: number) {
+  const r = rng(seed);
+  disc(g, gx, gy + 0.05, 0.4, 0x000000, 0.18);
+  const c = pt(gx, gy, 6);
+  for (let i = 0; i < 6; i++) {
+    g.fillStyle(pick(r, [0x166534, 0x15803d, 0x16a34a, 0x22c55e]), 1);
+    g.fillCircle(c.x + (r() - 0.5) * 18, c.y - r() * 8, 6 + r() * 3);
+  }
+  if (r() < 0.6) {
+    g.fillStyle(pick(r, [0xf43f5e, 0xfacc15, 0xffffff]), 1);
+    for (let i = 0; i < 4; i++) g.fillCircle(c.x + (r() - 0.5) * 16, c.y - 4 - r() * 6, 1.5);
+  }
+}
+
+// Poste de luz do jardim; à noite, o halo no chão.
+export function lampPost(g: G, gx: number, gy: number) {
+  if (sky().night) disc(g, gx, gy, 0.9, 0xfde68a, 0.18);
+  disc(g, gx, gy + 0.03, 0.12, 0x111827, 0.9);
+  const a = pt(gx, gy);
+  const b = pt(gx, gy, 46);
+  g.lineStyle(2.5, 0x1f2937, 1);
+  g.lineBetween(a.x, a.y, b.x, b.y);
+  g.fillStyle(sky().night ? 0xfef08a : 0xfef9c3, 1);
+  g.fillCircle(b.x, b.y - 3, 4.5);
+  g.fillStyle(0x1f2937, 1);
+  g.fillRect(b.x - 5, b.y - 9, 10, 2.5);
 }
 
 export function flowers(g: G, gx: number, gy: number, w: number, d: number, seed: number) {
@@ -404,9 +593,14 @@ export function flowers(g: G, gx: number, gy: number, w: number, d: number, seed
   }
 }
 
-export function stonePath(g: G, gx: number, gy0: number, gy1: number, seed: number) {
+// Pedras de (x0, y0) até (x1, y1), com um leve desalinhamento.
+export function stonePath(g: G, x0: number, y0: number, x1: number, y1: number, seed: number) {
   const r = rng(seed);
-  for (let y = gy0 + 0.3; y < gy1; y += 0.55) disc(g, gx + (r() - 0.5) * 0.25, y, 0.17 + r() * 0.06, 0xd6d3d1, 0.95);
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  for (let s = 0.3; s < len; s += 0.55) {
+    const t = s / len;
+    disc(g, x0 + (x1 - x0) * t + (r() - 0.5) * 0.25 * (y1 !== y0 ? 1 : 0), y0 + (y1 - y0) * t + (r() - 0.5) * 0.25 * (x1 !== x0 ? 1 : 0), 0.17 + r() * 0.06, 0xd6d3d1, 0.95);
+  }
 }
 
 export function hedge(g: G, gx: number, gy: number, w: number, d: number, h: number) {

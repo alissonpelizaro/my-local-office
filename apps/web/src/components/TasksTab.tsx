@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { everyLabel, money, names, STATUS_TONE, time, when } from '../format';
-import { act, api, closeNewTask, openChat, openEditTask, openNewTask, openTask, startReplay, type TaskView, useOffice, useT } from '../store';
+import { act, api, closeNewTask, openChat, openEditTask, openNewTask, openTask, startReplay, type TaskView, toast, useOffice, useT } from '../store';
 import type { OfficeEvent, Task } from '../types';
 import { EventLog } from './EventLog';
 import { Icon } from './icons';
@@ -262,7 +262,9 @@ function TaskDetail({ taskId }: { taskId: number }) {
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button variant="primary" icon="message" onClick={() => openChat(t.employee_id, { kind: 'thread', id: t.thread_id })}>
+        {/* Agendada: a ação principal é rodar já; a conversa fica secundária. */}
+        {(t.status === 'scheduled' || t.status === 'paused') && <RunNowButton task={t} />}
+        <Button variant={t.status === 'scheduled' || t.status === 'paused' ? undefined : 'primary'} icon="message" onClick={() => openChat(t.employee_id, { kind: 'thread', id: t.thread_id })}>
           {t.repeat_every ? tt.tasks.viewRuns : tt.tasks.openChat}
         </Button>
         {ran && events.length > 0 && (
@@ -315,6 +317,32 @@ function TaskDetail({ taskId }: { taskId: number }) {
         <EventLog events={events} className="max-h-[50vh]" />
       </div>
     </div>
+  );
+}
+
+// Roda a agendada já: avulsa sai da agenda; série ganha uma execução extra e mantém o próximo horário.
+export function RunNowButton({ task, compact }: { task: Task; compact?: boolean }) {
+  const t = useT();
+  const state = useOffice((s) => s.state);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      variant={compact ? 'ghost' : 'primary'}
+      size={compact ? 'sm' : undefined}
+      icon="zap"
+      busy={busy}
+      title={task.repeat_every ? t.tasks.runNowSeriesHint : t.tasks.runNowHint}
+      onClick={async () => {
+        setBusy(true);
+        const queued = await act(() => api<Task>('POST', `/api/tasks/${task.id}/run`));
+        setBusy(false);
+        if (!queued) return;
+        const busyNow = state.tasks.some((x) => x.employee_id === task.employee_id && x.status === 'running');
+        toast(busyNow ? t.tasks.runNowQueued(names(state)(task.employee_id)) : t.tasks.runNowStarted, 'success', { label: t.tasks.watchIt, run: () => openTask(queued.id) });
+      }}
+    >
+      {t.tasks.runNow}
+    </Button>
   );
 }
 
