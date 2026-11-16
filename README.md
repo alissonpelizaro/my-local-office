@@ -6,6 +6,9 @@ Every repository gets an AI employee. Employees sit in departments, ask each oth
 
 ![The office: employees at their desks, a permission request waiting on the boss's desk](docs/screenshots/office.png)
 
+
+## How to install
+
 ```bash
 curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/install.sh | bash
 ```
