@@ -12,8 +12,8 @@ Every repository gets an AI employee. Employees sit in departments, ask each oth
 ```bash
 curl -fsSL https://github.com/alissonpelizaro/my-local-office/releases/latest/download/install.sh | bash
 ```
-
-macOS and Linux. Needs [Claude Code](https://docs.claude.com/claude-code) installed and logged in; everything else comes bundled.
+Runs in macOS and Linux.
+> Needs [Claude Code](https://docs.claude.com/claude-code) installed and logged in; everything else comes bundled.
 
 ## Why
 
