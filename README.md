@@ -142,3 +142,7 @@ pnpm typecheck
 ## Contributing
 
 Issues and PRs are welcome. PR titles follow [Conventional Commits](https://www.conventionalcommits.org): Release Drafter labels them and drafts the next version (`feat` → minor, `fix`/`chore`/`docs` → patch, `!` → major). Publishing the draft builds the desktop app and headless packages for each platform and checks that they install and start.
+
+## License
+
+[MIT](LICENSE)
