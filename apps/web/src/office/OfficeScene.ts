@@ -428,7 +428,9 @@ export class OfficeScene extends Phaser.Scene {
       case 'promenade':
         return this.graphics(FLOOR_DEPTH + 2, (g) => D.stonePath(g, x + w / 2, y, x + w / 2, y + d, seed));
       case 'sofa':
-        return at(x + w / 2, y + d / 2, (g) => D.sofa(g, x, y, w, d, it.c ?? 0x475569));
+        // Cada assento ordena pela linha do encosto: quem senta fica na frente dele.
+        for (let i = 0; i < D.SOFA_SEATS; i++) at(x + ((i + 0.5) * w) / D.SOFA_SEATS, y + 0.22, (g) => D.sofa(g, x, y, w, d, it.c ?? 0x475569, i));
+        return;
       case 'coffeeTable':
         return at(x + w / 2, y + d / 2, (g) => D.coffeeTable(g, x, y, w, d, seed));
       case 'vending':

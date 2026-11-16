@@ -412,18 +412,22 @@ export function bench(g: G, gx: number, gy: number, w: number, d: number, flip =
   else box(g, gx, flip ? gy + d - 0.1 : gy, w, 0.1, 12, 0x854d0e, 11);
 }
 
-export function sofa(g: G, gx: number, gy: number, w: number, d: number, c: number) {
-  shadow(g, gx, gy, w, d);
-  box(g, gx, gy, w, 0.22, 21, darken(c, 0.12));
-  box(g, gx, gy + 0.22, w, d - 0.22, 9, c);
-  for (let i = 1; i < 3; i++) {
-    const a = pt(gx + (w * i) / 3, gy + 0.25, 9.2);
-    const b = pt(gx + (w * i) / 3, gy + d, 9.2);
+// Um assento por chamada (i de 0 a SOFA_SEATS - 1): cada um ordena sozinho, quem senta na ponta não some atrás do resto.
+export const SOFA_SEATS = 3;
+export function sofa(g: G, gx: number, gy: number, w: number, d: number, c: number, i: number) {
+  const sw = w / SOFA_SEATS;
+  const sx = gx + i * sw;
+  if (i === 0) shadow(g, gx, gy, w, d);
+  box(g, sx, gy, sw, 0.22, 21, darken(c, 0.12));
+  box(g, sx, gy + 0.22, sw, d - 0.22, 9, c);
+  if (i > 0) {
+    const a = pt(sx, gy + 0.25, 9.2);
+    const b = pt(sx, gy + d, 9.2);
     g.lineStyle(1, darken(c, 0.25), 0.7);
     g.lineBetween(a.x, a.y, b.x, b.y);
   }
-  box(g, gx, gy + 0.22, 0.18, d - 0.22, 14, darken(c, 0.05));
-  box(g, gx + w - 0.18, gy + 0.22, 0.18, d - 0.22, 14, darken(c, 0.05));
+  if (i === 0) box(g, gx, gy + 0.22, 0.18, d - 0.22, 14, darken(c, 0.05));
+  if (i === SOFA_SEATS - 1) box(g, gx + w - 0.18, gy + 0.22, 0.18, d - 0.22, 14, darken(c, 0.05));
 }
 
 export function coffeeTable(g: G, gx: number, gy: number, w: number, d: number, seed: number) {

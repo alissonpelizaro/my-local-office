@@ -107,8 +107,8 @@ export const LEISURE: Blueprint[] = [
           { t: 'coffeeTable', x: 0.9, y: 1.15, w: 1.2, d: 0.45 },
         ],
         spots: [
-          { x: 1.0, y: 0.7, icon: 'messages' },
-          { x: 2.0, y: 0.7, icon: 'coffee' },
+          { x: 1.0, y: 0.8, icon: 'messages' },
+          { x: 2.0, y: 0.8, icon: 'coffee' },
         ],
       },
       {
@@ -339,8 +339,8 @@ export const DEPT_FILL: Module[] = [
       { t: 'plant', x: 2.6, y: 2.5 },
     ],
     spots: [
-      { x: 1.0, y: 0.9, icon: 'coffee' },
-      { x: 2.0, y: 0.9, icon: 'messages' },
+      { x: 1.0, y: 1.0, icon: 'coffee' },
+      { x: 2.0, y: 1.0, icon: 'messages' },
     ],
   },
 ];
